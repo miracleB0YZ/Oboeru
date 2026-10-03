@@ -13,6 +13,11 @@ export type VocabularyGroup = {
   items: VocabularyItem[];
 };
 
+export type GrammarPattern = {
+  id: string;
+  pattern: string;
+};
+
 export type Choice = { id: string; label: string };
 
 export type Exercise = {
@@ -40,9 +45,10 @@ export type Lesson = {
   chapter: string;
   number: number;
   title: string;
-  contentStatus?: "empty" | "imported";
+  contentStatus?: "empty" | "index_only" | "imported";
   sourcePages?: number[];
   vocabularyGroups: VocabularyGroup[];
+  grammarPatterns?: GrammarPattern[];
   examples: { id: string; japanese: string; thai: string }[];
   exercises: Exercise[];
 };

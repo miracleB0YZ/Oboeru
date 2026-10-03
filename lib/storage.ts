@@ -1,6 +1,7 @@
 import type { BackupPayload, Catalog, Progress } from "./types";
 import { book, lesson as lessonOne } from "./lesson-data";
 import { lessonTwo } from "./lesson-two";
+import { grammarBook, grammarLessons } from "./grammar-book";
 
 const DB_NAME = "oboeru";
 const DB_VERSION = 1;
@@ -8,7 +9,21 @@ const STORE = "appState";
 const PROGRESS_KEY = "lesson-01-progress";
 const CATALOG_KEY = "catalog";
 
-const initialCatalog = (): Catalog => ({ books: [book], lessons: [lessonOne, lessonTwo] });
+const initialCatalog = (): Catalog => ({ books: [book, grammarBook], lessons: [lessonOne, lessonTwo, ...grammarLessons] });
+
+function mergeBuiltInCatalog(stored: Catalog): Catalog {
+  const builtIn = initialCatalog();
+  const bookIds = new Set(stored.books.map((item) => item.id));
+  const lessonIds = new Set(stored.lessons.map((item) => item.id));
+  const builtInLessons = new Map(builtIn.lessons.map((item) => [item.id, item]));
+  return {
+    books: [...stored.books, ...builtIn.books.filter((item) => !bookIds.has(item.id))],
+    lessons: [
+      ...stored.lessons.map((item) => item.contentStatus === "index_only" && builtInLessons.has(item.id) ? builtInLessons.get(item.id)! : item),
+      ...builtIn.lessons.filter((item) => !lessonIds.has(item.id)),
+    ],
+  };
+}
 
 export const emptyProgress = (): Progress => ({
   learnedIds: [], attempts: [], lastSection: "overview", updatedAt: new Date().toISOString(),
@@ -57,7 +72,11 @@ export const progressRepository = {
 export const catalogRepository = {
   async get(): Promise<Catalog> {
     const stored = await run<Catalog | undefined>("readonly", (store) => store.get(CATALOG_KEY));
-    if (stored) return stored;
+    if (stored) {
+      const merged = mergeBuiltInCatalog(stored);
+      if (JSON.stringify(merged) !== JSON.stringify(stored)) await this.save(merged);
+      return merged;
+    }
     const seed = initialCatalog();
     await this.save(seed);
     return seed;

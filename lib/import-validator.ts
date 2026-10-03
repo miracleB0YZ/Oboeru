@@ -1,8 +1,9 @@
 import { book } from "./lesson-data";
+import { grammarBook } from "./grammar-book";
 import type { Exercise, Lesson, VocabularyGroup } from "./types";
 
 export type LessonImport = {
-  schema: "shin-kanzen-master-n1-goi.lesson";
+  schema: "shin-kanzen-master-n1-goi.lesson" | "shin-kanzen-master-n2-bunpou.lesson";
   schemaVersion: 1;
   lesson: Lesson;
 };
@@ -17,11 +18,12 @@ const record = (value: unknown): value is Record<string, unknown> => typeof valu
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 
 export function validateLessonImport(value: unknown): LessonImport {
-  if (!record(value) || value.schema !== "shin-kanzen-master-n1-goi.lesson" || value.schemaVersion !== 1 || !record(value.lesson)) {
-    throw new Error("Schema ต้องเป็น shin-kanzen-master-n1-goi.lesson เวอร์ชัน 1");
+  if (!record(value) || (value.schema !== "shin-kanzen-master-n1-goi.lesson" && value.schema !== "shin-kanzen-master-n2-bunpou.lesson") || value.schemaVersion !== 1 || !record(value.lesson)) {
+    throw new Error("Schema ต้องเป็น Lesson ของ Oboeru เวอร์ชัน 1 ที่รองรับ");
   }
   const lesson = value.lesson;
-  if (lesson.bookId !== book.id || !nonempty(lesson.id) || !nonempty(lesson.title) || !nonempty(lesson.chapter)
+  const expectedBookId = value.schema === "shin-kanzen-master-n2-bunpou.lesson" ? grammarBook.id : book.id;
+  if (lesson.bookId !== expectedBookId || !nonempty(lesson.id) || !nonempty(lesson.title) || !nonempty(lesson.chapter)
     || !Number.isInteger(lesson.chapterNumber) || Number(lesson.chapterNumber) < 1
     || !Number.isInteger(lesson.number) || Number(lesson.number) < 1) {
     throw new Error("ข้อมูล Book, Chapter หรือ Lesson ไม่ถูกต้อง");
@@ -32,7 +34,16 @@ export function validateLessonImport(value: unknown): LessonImport {
   if (!Array.isArray(lesson.vocabularyGroups) || !Array.isArray(lesson.examples) || !Array.isArray(lesson.exercises)) {
     throw new Error("Lesson ต้องมี vocabularyGroups, examples และ exercises เป็น array");
   }
-  if (lesson.vocabularyGroups.length === 0) throw new Error("Lesson ที่นำเข้าต้องมีคำศัพท์อย่างน้อยหนึ่งกลุ่ม");
+  if (value.schema === "shin-kanzen-master-n1-goi.lesson" && lesson.vocabularyGroups.length === 0) throw new Error("Lesson คำศัพท์ต้องมีคำศัพท์อย่างน้อยหนึ่งกลุ่ม");
+  if (value.schema === "shin-kanzen-master-n2-bunpou.lesson") {
+    if (!Array.isArray(lesson.grammarPatterns) || lesson.grammarPatterns.length === 0) throw new Error("Lesson Grammar ต้องมี grammarPatterns อย่างน้อยหนึ่งรายการ");
+    const grammarIds = new Set<string>();
+    for (const item of lesson.grammarPatterns) {
+      if (!record(item) || !nonempty(item.id) || !nonempty(item.pattern) || grammarIds.has(item.id)) throw new Error("grammarPatterns มี ID ซ้ำหรือข้อมูลไม่ครบ");
+      grammarIds.add(item.id);
+    }
+    if (lesson.exercises.length === 0) throw new Error("Lesson Grammar ที่นำเข้าต้องมีแบบฝึกหัดและเฉลยอย่างน้อยหนึ่งข้อ");
+  }
   const groupIds = new Set<string>();
   const wordIds = new Map<string, string>();
   for (const group of lesson.vocabularyGroups as VocabularyGroup[]) {
@@ -83,21 +94,23 @@ export function analyzeLessonImport(value: LessonImport): ImportQualityIssue[] {
   if (pages.length && pages.length < 4) add("short-page-range", "warning", `พบ sourcePages เพียง ${pages.length} หน้า (${pages.join(", ")}) ขณะที่ Lesson ในเล่มนี้โดยทั่วไปมี 4 หน้า`);
   if (pages.some((page, index) => index > 0 && page !== pages[index - 1] + 1)) add("page-gap", "warning", `sourcePages ไม่ต่อเนื่อง (${pages.join(", ")}) อาจมีการข้ามทั้งหน้าขณะตัด ウォーミングアップ`);
 
-  const canonicalId = `shin-kanzen-n1-goi-${String(lesson.number).padStart(2, "0")}`;
+  const isGrammar = value.schema === "shin-kanzen-master-n2-bunpou.lesson";
+  const part = lesson.chapterNumber <= 3 ? 1 : lesson.chapterNumber === 4 ? 2 : 3;
+  const canonicalId = isGrammar ? `shin-kanzen-n2-bunpou-p${part}-${String(lesson.number).padStart(2, "0")}` : `shin-kanzen-n1-goi-${String(lesson.number).padStart(2, "0")}`;
   if (lesson.id !== canonicalId) add("noncanonical-lesson-id", "warning", `Lesson ${lesson.number}課 ควรใช้ id “${canonicalId}” แต่ไฟล์ใช้ “${lesson.id}” ให้ตรวจว่า number เป็นเลข課ที่พิมพ์จริง`);
 
   const words = lesson.vocabularyGroups.flatMap((group) => group.items);
   const vocabularyText = new Set(words.map((item) => item.word));
-  const suspiciousFormation = words.filter((item) => /〜.*[（(].*[、,].*[）)]/.test(item.word));
+  const suspiciousFormation = isGrammar ? [] : words.filter((item) => /〜.*[（(].*[、,].*[）)]/.test(item.word));
   if (suspiciousFormation.length) add("combined-word-formation", "error", `語形成 ถูกนำ pattern และหลายคำมารวมเป็น word เดียว: ${suspiciousFormation.slice(0, 3).map((item) => `「${item.word}」`).join("、")}`);
-  const sentenceWords = words.filter((item) => /[。！？!?]/.test(item.word));
+  const sentenceWords = isGrammar ? [] : words.filter((item) => /[。！？!?]/.test(item.word));
   if (sentenceWords.length) add("sentence-as-word", "error", `พบ word ที่มีเครื่องหมายจบประโยค: ${sentenceWords.slice(0, 3).map((item) => `「${item.word}」`).join("、")} ให้แยกเฉพาะช่วงตัวหนา`);
 
   const repeatedKana = new Set<string>();
   for (const example of lesson.examples) {
     for (const match of example.japanese.matchAll(/([ぁ-ゖ]{2})\1/g)) repeatedKana.add(match[0]);
   }
-  const missingMimetics = [...repeatedKana].filter((candidate) => ![...vocabularyText].some((word) => word.includes(candidate)));
+  const missingMimetics = isGrammar ? [] : [...repeatedKana].filter((candidate) => ![...vocabularyText].some((word) => word.includes(candidate)));
   if (missingMimetics.length) add("bold-candidate-only-in-examples", "warning", `พบคำเลียนเสียงใน examples แต่ไม่พบเป็น vocabulary item: ${missingMimetics.map((item) => `「${item}」`).join("、")} ให้ตรวจตัวหนาจากภาพ PDF`);
 
   const basic = lesson.exercises.filter((exercise) => exercise.section === "basic");
@@ -105,7 +118,7 @@ export function analyzeLessonImport(value: LessonImport): ImportQualityIssue[] {
   const basicGroups = new Set(basic.map((exercise) => exercise.group ?? exercise.title));
   if (basic.length >= 5 && basicGroups.size === 1) add("single-basic-group", "warning", `基本練習 มี ${basic.length} ข้อแต่มีเพียงกลุ่มเดียว อาจขาดแบบจับคู่ คลังคำ 類義 หรือ 語形成`);
   if (!practical.length) add("missing-practical", "warning", "ไม่พบ 実践練習 ในไฟล์");
-  if (lesson.exercises.length < 20) add("low-exercise-count", "warning", `พบแบบฝึกหัดรวมเพียง ${lesson.exercises.length} ข้อ ให้เทียบจำนวนกับทุกกลุ่มใน PDF`);
+  if (!isGrammar && lesson.exercises.length < 20) add("low-exercise-count", "warning", `พบแบบฝึกหัดรวมเพียง ${lesson.exercises.length} ข้อ ให้เทียบจำนวนกับทุกกลุ่มใน PDF`);
 
   const passages = lesson.exercises.map((exercise) => exercise.passage).filter((passage): passage is string => Boolean(passage));
   const leaked = lesson.exercises.filter((exercise) => exercise.type === "text" && passages.some((passage) => [exercise.correctLabel, exercise.answer, ...(exercise.acceptedAnswers ?? [])].some((answer) => answer.length > 1 && passage.includes(answer))));
