@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { book, lesson as lessonOne } from "@/lib/lesson-data";
 import { lessonTwo } from "@/lib/lesson-two";
-import { validateLessonImport, type LessonImport } from "@/lib/import-validator";
+import { analyzeLessonImport, validateLessonImport, type ImportQualityIssue, type LessonImport } from "@/lib/import-validator";
 import { catalogRepository, createBackup, emptyProgress, progressRepository, restoreBackup } from "@/lib/storage";
 import type { Attempt, Book, Catalog, Exercise, Lesson, Progress } from "@/lib/types";
 
@@ -58,7 +58,8 @@ export default function OboeruApp() {
   const answering = useRef(new Set<string>());
   const fileRef = useRef<HTMLInputElement>(null);
   const lessonFileRef = useRef<HTMLInputElement>(null);
-  const [importPreview, setImportPreview] = useState<LessonImport | null>(null);
+  const [importPreview, setImportPreview] = useState<{ data: LessonImport; issues: ImportQualityIssue[] } | null>(null);
+  const [importAccepted, setImportAccepted] = useState(false);
 
   useEffect(() => {
     Promise.all([progressRepository.get(), catalogRepository.get()]).then(([stored, available]) => {
@@ -86,6 +87,9 @@ export default function OboeruApp() {
   const bookLessons = lessons.filter((item) => item.bookId === selectedBookId);
   const bookLearned = bookLessons.reduce((sum, item) => sum + allVocabulary(item).filter((word) => progress.learnedIds.includes(word.id)).length, 0);
   const bookVocabulary = bookLessons.reduce((sum, item) => sum + allVocabulary(item).length, 0);
+  const lastBookLesson = [...bookLessons].sort((a, b) => b.number - a.number)[0];
+  const nextTemplateNumber = (lastBookLesson?.number ?? 0) + 1;
+  const templateUrl = `/api/lesson-template?number=${nextTemplateNumber}&chapterNumber=${lastBookLesson?.chapterNumber ?? 1}&chapter=${encodeURIComponent(lastBookLesson?.chapter ?? "1章 人間")}`;
 
   async function save(next: Progress) {
     progressRef.current = next;
@@ -180,14 +184,19 @@ export default function OboeruApp() {
         ...allVocabulary(item).map((word) => word.id), ...item.exercises.map((exercise) => exercise.id),
       ]));
       if (parsed.lesson.exercises.some((exercise) => allIds.has(exercise.id)) || allVocabulary(parsed.lesson).some((word) => allIds.has(word.id))) throw new Error("ID คำศัพท์หรือโจทย์ซ้ำกับ Lesson อื่น");
-      setImportPreview(parsed);
-      setNotice("ตรวจ Schema ผ่านแล้ว กรุณาตรวจตัวอย่างก่อนยืนยันนำเข้า");
-    } catch (error) { setImportPreview(null); setNotice(error instanceof Error ? error.message : "ไฟล์ JSON ไม่ถูกต้อง"); }
+      const issues = analyzeLessonImport(parsed);
+      setImportPreview({ data: parsed, issues });
+      setImportAccepted(false);
+      setNotice(issues.length ? `Schema ผ่าน แต่พบจุดที่ต้องตรวจ ${issues.length} รายการ` : "ตรวจ Schema และคุณภาพเบื้องต้นผ่านแล้ว กรุณาตรวจตัวอย่างก่อนยืนยันนำเข้า");
+    } catch (error) { setImportPreview(null); setImportAccepted(false); setNotice(error instanceof Error ? error.message : "ไฟล์ JSON ไม่ถูกต้อง"); }
     event.target.value = "";
   }
   async function confirmLessonImport() {
     if (!importPreview) return;
-    const incoming = { ...importPreview.lesson, contentStatus: "imported" as const };
+    const blocking = importPreview.issues.some((issue) => issue.severity === "error");
+    if (blocking) { setNotice("ยังนำเข้าไม่ได้ กรุณาแก้ข้อผิดพลาดสีแดงใน JSON ก่อน"); return; }
+    if (importPreview.issues.length && !importAccepted) { setNotice("กรุณายืนยันว่าได้ตรวจคำเตือนทั้งหมดแล้ว"); return; }
+    const incoming = { ...importPreview.data.lesson, contentStatus: "imported" as const };
     const next = { ...catalog, lessons: [...catalog.lessons.filter((item) => item.id !== incoming.id), incoming] };
     await saveCatalog(next);
     setImportPreview(null);
@@ -228,7 +237,7 @@ export default function OboeruApp() {
         {catalog.books.filter((item) => categoryFilter === "all" || item.category === categoryFilter).map((item) => { const itemLessons = lessons.filter((entry) => entry.bookId === item.id); const itemVocab = itemLessons.reduce((sum, entry) => sum + allVocabulary(entry).length, 0); const itemLearned = itemLessons.reduce((sum, entry) => sum + allVocabulary(entry).filter((word) => progress.learnedIds.includes(word.id)).length, 0); return <section key={item.id} className="library-book"><BookSummary book={item} lessonCount={itemLessons.length} learned={itemLearned} total={itemVocab} onOpen={() => setSelectedBookId(item.id)} />{selectedBookId === item.id ? <LessonPicker lessons={itemLessons} activeId={lessonId} onOpen={(id) => go("vocabulary", id)} progress={progress} /> : null}</section>; })}
         <details className="management-panel"><summary>เพิ่มหนังสือ</summary><form action={createBook}><label>ชื่อหนังสือ<input name="title" required placeholder="ชื่อหนังสือ" /></label><label>ประเภท<select name="category"><option>Vocabulary</option><option>Grammar</option></select></label><label>JLPT<select name="jlptLevel">{["N1","N2","N3","N4","N5"].map((level) => <option key={level}>{level}</option>)}</select></label><button type="submit">เพิ่มหนังสือ</button></form></details>
         {(categoryFilter === "all" || selectedBook.category === categoryFilter) ? <details className="management-panel"><summary>เพิ่ม Lesson ว่างใน “{selectedBook.title}”</summary><form action={createEmptyLesson}><label>บทที่<input name="chapterNumber" type="number" min="1" required defaultValue="1" /></label><label>ชื่อบท<input name="chapter" required placeholder="เช่น 1章 人間" /></label><label>Lesson ที่<input name="number" type="number" min="1" required /></label><label>ชื่อ Lesson<input name="title" required placeholder="เช่น 人間関係" /></label><button type="submit">เพิ่ม Lesson</button></form></details> : null}
-        <div className="management-panel import-panel"><strong>นำเข้าเนื้อหา Lesson จาก JSON</strong><p>รองรับ Schema ของ 新完全マスター 語彙 N1 เท่านั้น ระบบจะแสดงตัวอย่างและตรวจเฉลยก่อนบันทึก</p><button onClick={() => lessonFileRef.current?.click()}>เลือกไฟล์ JSON</button><input ref={lessonFileRef} hidden type="file" accept="application/json,.json" onChange={previewLessonFile} />{importPreview ? <div className="import-preview"><strong>{importPreview.lesson.chapter} / {importPreview.lesson.number}課 {importPreview.lesson.title}</strong><p>{importPreview.lesson.vocabularyGroups.reduce((sum, group) => sum + group.items.length, 0)} คำ · {importPreview.lesson.examples.length} ตัวอย่าง · {importPreview.lesson.exercises.length} คำตอบ</p><button onClick={confirmLessonImport}>ยืนยันนำเข้า IndexedDB</button><button onClick={() => setImportPreview(null)}>ยกเลิก</button></div> : null}</div>
+        <div className="management-panel import-panel"><strong>นำเข้าเนื้อหา Lesson จาก JSON</strong><p>รองรับ Schema ของ 新完全マスター 語彙 N1 เท่านั้น ระบบจะตรวจโครงสร้าง หน้าที่ขาด คำศัพท์น่าสงสัย และคำตอบที่รั่วในบทอ่านก่อนบันทึก</p><div className="import-actions"><button onClick={() => lessonFileRef.current?.click()}>เลือกไฟล์ JSON</button>{selectedBook.id === book.id ? <a href={templateUrl}>ดาวน์โหลด Template สำหรับ {nextTemplateNumber}課</a> : null}</div><input ref={lessonFileRef} hidden type="file" accept="application/json,.json" onChange={previewLessonFile} />{importPreview ? <div className="import-preview"><strong>{importPreview.data.lesson.chapter} / {importPreview.data.lesson.number}課 {importPreview.data.lesson.title}</strong><p>{importPreview.data.lesson.vocabularyGroups.reduce((sum, group) => sum + group.items.length, 0)} คำ · {importPreview.data.lesson.examples.length} ตัวอย่าง · 基本 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "basic").length} ข้อ · 実践 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "practical").length} ข้อ</p><p>หน้าต้นฉบับ: {importPreview.data.lesson.sourcePages?.join(", ") || "ไม่ได้ระบุ"}</p>{importPreview.issues.length ? <div className="quality-report"><strong>รายงานคุณภาพก่อนนำเข้า</strong><ul>{importPreview.issues.map((issue) => <li key={`${issue.code}-${issue.message}`} className={issue.severity}>{issue.severity === "error" ? "ต้องแก้" : "ควรตรวจ"}: {issue.message}</li>)}</ul>{!importPreview.issues.some((issue) => issue.severity === "error") ? <label className="quality-confirm"><input type="checkbox" checked={importAccepted} onChange={(event) => setImportAccepted(event.target.checked)} />ฉันตรวจคำเตือนกับ PDF แล้วและยืนยันว่าข้อมูลถูกต้อง</label> : null}</div> : <p className="quality-pass">ไม่พบความผิดปกติจากการตรวจอัตโนมัติ</p>}<button disabled={importPreview.issues.some((issue) => issue.severity === "error") || (importPreview.issues.length > 0 && !importAccepted)} onClick={confirmLessonImport}>ยืนยันนำเข้า IndexedDB</button><button onClick={() => { setImportPreview(null); setImportAccepted(false); }}>ยกเลิก</button></div> : null}</div>
         <div className="library-note">เนื้อหา Lesson 1–2 ถูกเก็บใน IndexedDB หลังเปิดครั้งแรก · สำรองทั้งหนังสือ เนื้อหา และความคืบหน้าได้ด้วยปุ่ม “ส่งออกข้อมูล”</div>
       </div> : null}
 
