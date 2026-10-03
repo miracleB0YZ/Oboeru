@@ -17,12 +17,12 @@ export type ImportQualityIssue = {
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 
-export function validateLessonImport(value: unknown): LessonImport {
+export function validateLessonImport(value: unknown, editing?: { bookId: string }): LessonImport {
   if (!record(value) || (value.schema !== "shin-kanzen-master-n1-goi.lesson" && value.schema !== "shin-kanzen-master-n2-bunpou.lesson") || value.schemaVersion !== 1 || !record(value.lesson)) {
     throw new Error("Schema ต้องเป็น Lesson ของ Oboeru เวอร์ชัน 1 ที่รองรับ");
   }
   const lesson = value.lesson;
-  const expectedBookId = value.schema === "shin-kanzen-master-n2-bunpou.lesson" ? grammarBook.id : book.id;
+  const expectedBookId = editing?.bookId ?? (value.schema === "shin-kanzen-master-n2-bunpou.lesson" ? grammarBook.id : book.id);
   if (lesson.bookId !== expectedBookId || !nonempty(lesson.id) || !nonempty(lesson.title) || !nonempty(lesson.chapter)
     || !Number.isInteger(lesson.chapterNumber) || Number(lesson.chapterNumber) < 1
     || !Number.isInteger(lesson.number) || Number(lesson.number) < 1) {
@@ -34,15 +34,15 @@ export function validateLessonImport(value: unknown): LessonImport {
   if (!Array.isArray(lesson.vocabularyGroups) || !Array.isArray(lesson.examples) || !Array.isArray(lesson.exercises)) {
     throw new Error("Lesson ต้องมี vocabularyGroups, examples และ exercises เป็น array");
   }
-  if (value.schema === "shin-kanzen-master-n1-goi.lesson" && lesson.vocabularyGroups.length === 0) throw new Error("Lesson คำศัพท์ต้องมีคำศัพท์อย่างน้อยหนึ่งกลุ่ม");
+  if (!editing && value.schema === "shin-kanzen-master-n1-goi.lesson" && lesson.vocabularyGroups.length === 0) throw new Error("Lesson คำศัพท์ต้องมีคำศัพท์อย่างน้อยหนึ่งกลุ่ม");
   if (value.schema === "shin-kanzen-master-n2-bunpou.lesson") {
-    if (!Array.isArray(lesson.grammarPatterns) || lesson.grammarPatterns.length === 0) throw new Error("Lesson Grammar ต้องมี grammarPatterns อย่างน้อยหนึ่งรายการ");
+    if (!Array.isArray(lesson.grammarPatterns) || (!editing && lesson.grammarPatterns.length === 0)) throw new Error("Lesson Grammar ต้องมี grammarPatterns เป็นรายการไวยากรณ์");
     const grammarIds = new Set<string>();
     for (const item of lesson.grammarPatterns) {
       if (!record(item) || !nonempty(item.id) || !nonempty(item.pattern) || grammarIds.has(item.id)) throw new Error("grammarPatterns มี ID ซ้ำหรือข้อมูลไม่ครบ");
       grammarIds.add(item.id);
     }
-    if (lesson.exercises.length === 0) throw new Error("Lesson Grammar ที่นำเข้าต้องมีแบบฝึกหัดและเฉลยอย่างน้อยหนึ่งข้อ");
+    if (!editing && lesson.exercises.length === 0) throw new Error("Lesson Grammar ที่นำเข้าต้องมีแบบฝึกหัดและเฉลยอย่างน้อยหนึ่งข้อ");
   }
   const groupIds = new Set<string>();
   const wordIds = new Map<string, string>();
@@ -56,6 +56,7 @@ export function validateLessonImport(value: unknown): LessonImport {
         throw new Error(`คำศัพท์ใน ${group.title} ต้องมี id, word และ thai`);
       }
       if (item.japaneseMeaning !== undefined && typeof item.japaneseMeaning !== "string") throw new Error(`japaneseMeaning ของ ${item.word} ต้องเป็นข้อความ`);
+      if (item.reading !== undefined && typeof item.reading !== "string") throw new Error(`reading ของ ${item.word} ต้องเป็นข้อความ`);
       const previousWord = wordIds.get(item.id);
       if (previousWord && previousWord !== item.word) throw new Error(`ID คำศัพท์ ${item.id} ถูกใช้กับคนละคำ`);
       wordIds.set(item.id, item.word);

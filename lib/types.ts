@@ -64,6 +64,8 @@ export type Book = {
 export type Catalog = {
   books: Book[];
   lessons: Lesson[];
+  deletedLessonIds?: string[];
+  editedLessonIds?: string[];
 };
 
 export type Attempt = {
@@ -77,7 +79,7 @@ export type Attempt = {
 export type Progress = {
   learnedIds: string[];
   attempts: Attempt[];
-  lastSection: "overview" | "library" | "vocabulary" | "examples" | "exercises";
+  lastSection: "overview" | "library" | "management" | "vocabulary" | "examples" | "exercises";
   lastLessonId?: string;
   showThai?: boolean;
   updatedAt: string;

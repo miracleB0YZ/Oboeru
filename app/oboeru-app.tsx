@@ -5,7 +5,8 @@ import { book, lesson as lessonOne } from "@/lib/lesson-data";
 import { lessonTwo } from "@/lib/lesson-two";
 import { grammarBook, grammarLessons } from "@/lib/grammar-book";
 import { analyzeLessonImport, validateLessonImport, type ImportQualityIssue, type LessonImport } from "@/lib/import-validator";
-import { catalogRepository, createBackup, emptyProgress, progressRepository, restoreBackup } from "@/lib/storage";
+import { catalogRepository, createBackup, emptyProgress, progressRepository, restoreBackup, saveLearningState } from "@/lib/storage";
+import LessonEditor from "./lesson-editor";
 import type { Attempt, Book, Catalog, Exercise, Lesson, Progress } from "@/lib/types";
 
 const seededCatalog: Catalog = { books: [book, grammarBook], lessons: [lessonOne, lessonTwo, ...grammarLessons] };
@@ -16,6 +17,7 @@ const navigation: Array<{ id: Section; label: string; icon: string }> = [
   { id: "vocabulary", label: "เนื้อหา", icon: "あ" },
   { id: "examples", label: "ตัวอย่าง", icon: "文" },
   { id: "exercises", label: "แบบฝึกหัด", icon: "✓" },
+  { id: "management", label: "จัดการหนังสือ", icon: "⚙" },
 ];
 const percentage = (value: number, total: number) => total ? Math.round(value * 100 / total) : 0;
 const normalized = (value: string) => value.normalize("NFKC").trim();
@@ -52,6 +54,7 @@ export default function OboeruApp() {
   const [section, setSection] = useState<Section>("overview");
   const [lessonId, setLessonId] = useState(lessonOne.id);
   const [selectedBookId, setSelectedBookId] = useState(book.id);
+  const [bookFocused, setBookFocused] = useState(false);
   const [showThai, setShowThai] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<"all" | Book["category"]>("all");
   const [filter, setFilter] = useState<"all" | "basic" | "practical">("all");
@@ -62,6 +65,7 @@ export default function OboeruApp() {
   const lessonFileRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<{ data: LessonImport; issues: ImportQualityIssue[] } | null>(null);
   const [importAccepted, setImportAccepted] = useState(false);
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
 
   useEffect(() => {
     Promise.all([progressRepository.get(), catalogRepository.get()]).then(([stored, available]) => {
@@ -79,7 +83,10 @@ export default function OboeruApp() {
   }, []);
 
   const lessons = catalog.lessons;
-  const activeLesson = lessons.find((item) => item.id === lessonId) ?? lessonOne;
+  const activeLesson = lessons.find((item) => item.id === lessonId) ?? lessons[0] ?? {
+    id: "", bookId: selectedBookId, chapterNumber: 1, chapter: "ยังไม่มีบทเรียน", number: 1,
+    title: "ยังไม่มี Lesson", vocabularyGroups: [], examples: [], exercises: [],
+  };
   const activeBook = catalog.books.find((item) => item.id === activeLesson.bookId) ?? book;
   const selectedBook = catalog.books.find((item) => item.id === selectedBookId) ?? book;
   const vocab = allVocabulary(activeLesson);
@@ -101,9 +108,10 @@ export default function OboeruApp() {
     try { await progressRepository.save(next); } catch { setNotice("บันทึกข้อมูลไม่สำเร็จ กรุณาลองอีกครั้ง"); }
   }
   async function go(nextSection: Section, nextLessonId = lessonId) {
+    if (nextSection === "library") setBookFocused(section === "vocabulary" || section === "examples" || section === "exercises");
     setSection(nextSection);
     setLessonId(nextLessonId);
-    setSelectedBookId(lessons.find((item) => item.id === nextLessonId)?.bookId ?? selectedBookId);
+    if (nextSection !== "management") setSelectedBookId(lessons.find((item) => item.id === nextLessonId)?.bookId ?? selectedBookId);
     setFilter("all");
     await save({ ...progressRef.current, lastSection: nextSection, lastLessonId: nextLessonId, showThai, updatedAt: new Date().toISOString() });
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -154,6 +162,52 @@ export default function OboeruApp() {
     await catalogRepository.save(consistent);
     setCatalog(consistent);
   }
+  async function commitLessonChange(next: Catalog, previous: Lesson, replacement?: Lesson) {
+    const retainedItems = new Set(next.lessons.flatMap((item) => allLearningItems(item).map((entry) => entry.id)));
+    const previousItems = new Set(allLearningItems(previous).map((item) => item.id));
+    const previousExercises = new Map(previous.exercises.map((item) => [item.id, item]));
+    const unchangedExercises = new Set((replacement?.exercises ?? []).filter((item) => {
+      const old = previousExercises.get(item.id);
+      const grading = (entry: Exercise) => JSON.stringify([entry.type, entry.prompt, entry.passage, entry.choices, entry.answer, entry.acceptedAnswers]);
+      return old && grading(old) === grading(item);
+    }).map((item) => item.id));
+    const fallback = next.lessons.find((item) => item.bookId === previous.bookId) ?? next.lessons[0];
+    const nextLessonId = next.lessons.some((item) => item.id === lessonId) ? lessonId : fallback?.id;
+    const nextProgress: Progress = {
+      ...progressRef.current,
+      learnedIds: progressRef.current.learnedIds.filter((id) => !previousItems.has(id) || retainedItems.has(id)),
+      attempts: progressRef.current.attempts.filter((attempt) => !previousExercises.has(attempt.exerciseId) || unchangedExercises.has(attempt.exerciseId)),
+      lastLessonId: nextLessonId,
+      lastSection: "management",
+      updatedAt: new Date().toISOString(),
+    };
+    const consistent = { ...next, books: next.books.map((item) => ({ ...item, lessons: next.lessons.filter((entry) => entry.bookId === item.id).length })) };
+    await saveLearningState(consistent, nextProgress);
+    setCatalog(consistent); progressRef.current = nextProgress; setProgress(nextProgress);
+    setLessonId(nextLessonId ?? ""); setSection("management"); setEditingLesson(null);
+    previousExercises.forEach((_, id) => answering.current.delete(id));
+  }
+  async function updateLesson(candidate: Lesson) {
+    if (!editingLesson) return;
+    const owner = catalog.books.find((item) => item.id === candidate.bookId);
+    if (!owner) throw new Error("ไม่พบหนังสือของ Lesson นี้");
+    const schema = owner.category === "Grammar" ? "shin-kanzen-master-n2-bunpou.lesson" : "shin-kanzen-master-n1-goi.lesson";
+    validateLessonImport({ schema, schemaVersion: 1, lesson: candidate }, { bookId: owner.id });
+    const others = catalog.lessons.filter((item) => item.id !== candidate.id);
+    if (others.some((item) => item.bookId === candidate.bookId && item.chapterNumber === candidate.chapterNumber && item.number === candidate.number)) throw new Error("Lesson หมายเลขนี้มีอยู่แล้วในบทนี้");
+    const otherIds = new Set(others.flatMap((item) => [...allLearningItems(item).map((entry) => entry.id), ...item.exercises.map((entry) => entry.id)]));
+    if ([...allLearningItems(candidate), ...candidate.exercises].some((item) => otherIds.has(item.id))) throw new Error("ID คำศัพท์ ไวยากรณ์ หรือโจทย์ซ้ำกับ Lesson อื่น");
+    const hasContent = allLearningItems(candidate).length > 0 || candidate.examples.length > 0 || candidate.exercises.length > 0;
+    const updated = { ...candidate, contentStatus: (hasContent ? (owner.category === "Grammar" && !candidate.exercises.length ? "index_only" : "imported") : "empty") as Lesson["contentStatus"] };
+    await commitLessonChange({ ...catalog, lessons: catalog.lessons.map((item) => item.id === updated.id ? updated : item), editedLessonIds: [...new Set([...(catalog.editedLessonIds ?? []), updated.id])] }, editingLesson, updated);
+    setNotice("บันทึกการแก้ไข Lesson แล้ว");
+  }
+  async function deleteLesson() {
+    if (!editingLesson) return;
+    const previous = editingLesson;
+    await commitLessonChange({ ...catalog, lessons: catalog.lessons.filter((item) => item.id !== previous.id), deletedLessonIds: [...new Set([...(catalog.deletedLessonIds ?? []), previous.id])] }, previous);
+    setNotice(`ลบ ${previous.number}課 ${previous.title} และความคืบหน้าที่เกี่ยวข้องแล้ว กู้คืนได้จากไฟล์สำรองที่ส่งออกไว้`);
+  }
   async function createBook(form: FormData) {
     const title = String(form.get("title") ?? "").trim();
     const category = String(form.get("category") ?? "Vocabulary") as Book["category"];
@@ -166,6 +220,15 @@ export default function OboeruApp() {
     setCategoryFilter(category);
     setNotice(`เพิ่มหนังสือ “${title}” แล้ว`);
   }
+  async function editBook(form: FormData) {
+    const title = String(form.get("title") ?? "").trim();
+    const jlptLevel = String(form.get("jlptLevel")) as Book["jlptLevel"];
+    if (!title || !["N1", "N2", "N3", "N4", "N5"].includes(jlptLevel)) return;
+    try {
+      await saveCatalog({ ...catalog, books: catalog.books.map((item) => item.id === selectedBookId ? { ...item, title, jlptLevel } : item) });
+      setNotice("บันทึกข้อมูลหนังสือแล้ว");
+    } catch { setNotice("บันทึกข้อมูลหนังสือไม่สำเร็จ กรุณาลองอีกครั้ง"); }
+  }
   async function createEmptyLesson(form: FormData) {
     const title = String(form.get("title") ?? "").trim();
     const chapter = String(form.get("chapter") ?? "").trim();
@@ -174,8 +237,9 @@ export default function OboeruApp() {
     if (!title || !chapter || !Number.isInteger(chapterNumber) || chapterNumber < 1 || !Number.isInteger(number) || number < 1) { setNotice("กรอกชื่อบทและหมายเลข Lesson ให้ครบ"); return; }
     if (catalog.lessons.some((item) => item.bookId === selectedBookId && item.chapterNumber === chapterNumber && item.number === number)) { setNotice("Lesson หมายเลขนี้มีอยู่แล้วในบทนี้"); return; }
     const empty: Lesson = { id: `${selectedBookId}-chapter-${chapterNumber}-lesson-${number}`, bookId: selectedBookId, chapterNumber, chapter, number, title, contentStatus: "empty", vocabularyGroups: [], examples: [], exercises: [] };
-    await saveCatalog({ ...catalog, lessons: [...catalog.lessons, empty] });
+    await saveCatalog({ ...catalog, lessons: [...catalog.lessons, empty], deletedLessonIds: catalog.deletedLessonIds?.filter((id) => id !== empty.id) });
     setLessonId(empty.id);
+    setEditingLesson(empty);
     setNotice("เพิ่ม Lesson ว่างแล้ว สามารถนำเข้าเนื้อหาในภายหลัง");
   }
   async function previewLessonFile(event: ChangeEvent<HTMLInputElement>) {
@@ -201,7 +265,7 @@ export default function OboeruApp() {
     if (blocking) { setNotice("ยังนำเข้าไม่ได้ กรุณาแก้ข้อผิดพลาดสีแดงใน JSON ก่อน"); return; }
     if (importPreview.issues.length && !importAccepted) { setNotice("กรุณายืนยันว่าได้ตรวจคำเตือนทั้งหมดแล้ว"); return; }
     const incoming = { ...importPreview.data.lesson, contentStatus: "imported" as const };
-    const next = { ...catalog, lessons: [...catalog.lessons.filter((item) => item.id !== incoming.id), incoming] };
+    const next = { ...catalog, lessons: [...catalog.lessons.filter((item) => item.id !== incoming.id), incoming], deletedLessonIds: catalog.deletedLessonIds?.filter((id) => id !== incoming.id), editedLessonIds: [...new Set([...(catalog.editedLessonIds ?? []), incoming.id])] };
     await saveCatalog(next);
     setImportPreview(null);
     await go("vocabulary", incoming.id);
@@ -237,10 +301,17 @@ export default function OboeruApp() {
       </div> : null}
 
       {section === "library" ? <div className="page-stack"><section className="lesson-heading"><span className="eyebrow">Books / Chapters / Lessons</span><h2>คลังหนังสือ</h2><p>เนื้อหาเรียงตามหนังสือ → บท → Lesson แต่ละ Lesson มีความคืบหน้าของตัวเอง</p></section>
-        <div className="category-tabs" aria-label="กรองประเภทหนังสือ">{(["all", "Vocabulary", "Grammar"] as const).map((category) => <button key={category} className={categoryFilter === category ? "active" : ""} onClick={() => { setCategoryFilter(category); if (category !== "all" && selectedBook.category !== category) { const first = catalog.books.find((item) => item.category === category); if (first) setSelectedBookId(first.id); } }}>{category === "all" ? "ทั้งหมด" : category}</button>)}</div>
-        {catalog.books.filter((item) => categoryFilter === "all" || item.category === categoryFilter).map((item) => { const itemLessons = lessons.filter((entry) => entry.bookId === item.id); const itemTotal = itemLessons.reduce((sum, entry) => sum + allLearningItems(entry).length, 0); const itemLearned = itemLessons.reduce((sum, entry) => sum + allLearningItems(entry).filter((learningItem) => progress.learnedIds.includes(learningItem.id)).length, 0); return <section key={item.id} className="library-book"><BookSummary book={item} lessonCount={itemLessons.length} learned={itemLearned} total={itemTotal} onOpen={() => setSelectedBookId(item.id)} />{selectedBookId === item.id ? <LessonPicker lessons={itemLessons} activeId={lessonId} onOpen={(id) => go("vocabulary", id)} progress={progress} /> : null}</section>; })}
+        {bookFocused ? <button className="text-link library-back" onClick={() => { setBookFocused(false); setCategoryFilter("all"); }}>← หนังสือทั้งหมด</button> : <div className="category-tabs" aria-label="กรองประเภทหนังสือ">{(["all", "Vocabulary", "Grammar"] as const).map((category) => <button key={category} className={categoryFilter === category ? "active" : ""} onClick={() => { setCategoryFilter(category); if (category !== "all" && selectedBook.category !== category) { const first = catalog.books.find((item) => item.category === category); if (first) setSelectedBookId(first.id); } }}>{category === "all" ? "ทั้งหมด" : category}</button>)}</div>}
+        {catalog.books.filter((item) => bookFocused ? item.id === selectedBookId : categoryFilter === "all" || item.category === categoryFilter).map((item) => { const itemLessons = lessons.filter((entry) => entry.bookId === item.id); const itemTotal = itemLessons.reduce((sum, entry) => sum + allLearningItems(entry).length, 0); const itemLearned = itemLessons.reduce((sum, entry) => sum + allLearningItems(entry).filter((learningItem) => progress.learnedIds.includes(learningItem.id)).length, 0); return <section key={item.id} className="library-book"><BookSummary book={item} lessonCount={itemLessons.length} learned={itemLearned} total={itemTotal} onOpen={() => { setSelectedBookId(item.id); setBookFocused(true); }} />{bookFocused && selectedBookId === item.id ? <LessonPicker lessons={itemLessons} activeId={lessonId} onOpen={(id) => go("vocabulary", id)} progress={progress} /> : null}</section>; })}
+      </div> : null}
+
+      {section === "management" ? <div className="page-stack">
+        <section className="lesson-heading"><span className="eyebrow">Book management</span><h2>จัดการหนังสือ</h2><p>เพิ่มหนังสือ แก้ไขข้อมูล และจัดการเนื้อหา Lesson</p></section>
+        <section className="management-panel"><label>เลือกหนังสือที่จะจัดการ<select value={selectedBookId} onChange={(event) => { setSelectedBookId(event.target.value); setImportPreview(null); setImportAccepted(false); }}>{catalog.books.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label></section>
+        <details className="management-panel" key={selectedBook.id + selectedBook.title + selectedBook.jlptLevel}><summary>แก้ไขข้อมูลหนังสือ “{selectedBook.title}”</summary><form action={editBook}><label>ชื่อหนังสือ<input name="title" required defaultValue={selectedBook.title} /></label><label>JLPT<select name="jlptLevel" defaultValue={selectedBook.jlptLevel}>{["N1", "N2", "N3", "N4", "N5"].map((level) => <option key={level}>{level}</option>)}</select></label><button type="submit">บันทึกข้อมูลหนังสือ</button></form></details>
+        <section className="management-panel"><strong>แก้ไข / ลบ Lesson ใน “{selectedBook.title}”</strong><form onSubmit={(event) => { event.preventDefault(); const id = String(new FormData(event.currentTarget).get("lessonId")); setEditingLesson(bookLessons.find((item) => item.id === id) ?? null); }}><label>เลือก Lesson<select key={selectedBookId + bookLessons.map((item) => item.id).join()} name="lessonId" required disabled={!bookLessons.length}>{[...bookLessons].sort((a, b) => a.chapterNumber - b.chapterNumber || a.number - b.number).map((item) => <option value={item.id} key={item.id}>{item.chapter} · {item.number}課 {item.title}</option>)}</select></label><button type="submit" disabled={!bookLessons.length}>แก้ไข / ลบ Lesson</button></form>{!bookLessons.length ? <p>ยังไม่มี Lesson เพิ่ม Lesson ด้านล่างเพื่อเริ่มใส่เนื้อหา</p> : null}</section>
         <details className="management-panel"><summary>เพิ่มหนังสือ</summary><form action={createBook}><label>ชื่อหนังสือ<input name="title" required placeholder="ชื่อหนังสือ" /></label><label>ประเภท<select name="category"><option>Vocabulary</option><option>Grammar</option></select></label><label>JLPT<select name="jlptLevel">{["N1","N2","N3","N4","N5"].map((level) => <option key={level}>{level}</option>)}</select></label><button type="submit">เพิ่มหนังสือ</button></form></details>
-        {(categoryFilter === "all" || selectedBook.category === categoryFilter) ? <details className="management-panel"><summary>เพิ่ม Lesson ว่างใน “{selectedBook.title}”</summary><form action={createEmptyLesson}><label>บทที่<input name="chapterNumber" type="number" min="1" required defaultValue="1" /></label><label>ชื่อบท<input name="chapter" required placeholder="เช่น 1章 人間" /></label><label>Lesson ที่<input name="number" type="number" min="1" required /></label><label>ชื่อ Lesson<input name="title" required placeholder="เช่น 人間関係" /></label><button type="submit">เพิ่ม Lesson</button></form></details> : null}
+        <details className="management-panel"><summary>เพิ่ม Lesson ว่างใน “{selectedBook.title}”</summary><form action={createEmptyLesson}><label>บทที่<input name="chapterNumber" type="number" min="1" required defaultValue="1" /></label><label>ชื่อบท<input name="chapter" required placeholder="เช่น 1章 人間" /></label><label>Lesson ที่<input name="number" type="number" min="1" required /></label><label>ชื่อ Lesson<input name="title" required placeholder="เช่น 人間関係" /></label><button type="submit">เพิ่ม Lesson</button></form></details>
         <div className="management-panel import-panel"><strong>นำเข้าเนื้อหา Lesson จาก JSON</strong><p>รองรับ 新完全マスター 語彙 N1 และ 文法 N2 ระบบจะตรวจโครงสร้าง หน้าที่ขาด เนื้อหาน่าสงสัย และคำตอบที่รั่วในบทอ่านก่อนบันทึก</p><div className="import-actions"><button onClick={() => lessonFileRef.current?.click()}>เลือกไฟล์ JSON</button>{selectedBook.id === book.id ? <a href={templateUrl}>ดาวน์โหลด Template สำหรับ {nextTemplateNumber}課</a> : null}</div><input ref={lessonFileRef} hidden type="file" accept="application/json,.json" onChange={previewLessonFile} />{importPreview ? <div className="import-preview"><strong>{importPreview.data.lesson.chapter} / {importPreview.data.lesson.number}課 {importPreview.data.lesson.title}</strong><p>{importPreview.data.schema === "shin-kanzen-master-n2-bunpou.lesson" ? `${importPreview.data.lesson.grammarPatterns?.length ?? 0} ไวยากรณ์` : `${importPreview.data.lesson.vocabularyGroups.reduce((sum, group) => sum + group.items.length, 0)} คำ · ${importPreview.data.lesson.examples.length} ตัวอย่าง`} · 基本 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "basic").length} ข้อ · 実践 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "practical").length} ข้อ</p><p>หน้าต้นฉบับ: {importPreview.data.lesson.sourcePages?.join(", ") || "ไม่ได้ระบุ"}</p>{importPreview.issues.length ? <div className="quality-report"><strong>รายงานคุณภาพก่อนนำเข้า</strong><ul>{importPreview.issues.map((issue) => <li key={`${issue.code}-${issue.message}`} className={issue.severity}>{issue.severity === "error" ? "ต้องแก้" : "ควรตรวจ"}: {issue.message}</li>)}</ul>{!importPreview.issues.some((issue) => issue.severity === "error") ? <label className="quality-confirm"><input type="checkbox" checked={importAccepted} onChange={(event) => setImportAccepted(event.target.checked)} />ฉันตรวจคำเตือนกับ PDF แล้วและยืนยันว่าข้อมูลถูกต้อง</label> : null}</div> : <p className="quality-pass">ไม่พบความผิดปกติจากการตรวจอัตโนมัติ</p>}<button disabled={importPreview.issues.some((issue) => issue.severity === "error") || (importPreview.issues.length > 0 && !importAccepted)} onClick={confirmLessonImport}>ยืนยันนำเข้า IndexedDB</button><button onClick={() => { setImportPreview(null); setImportAccepted(false); }}>ยกเลิก</button></div> : null}</div>
         <div className="library-note">มีดัชนีคำศัพท์ N1 Lesson 1–2 และดัชนีไวยากรณ์ N2 ครบ 3 ภาค 41課 · สำรองทั้งหนังสือ เนื้อหา และความคืบหน้าได้ด้วยปุ่ม “ส่งออกข้อมูล”</div>
       </div> : null}
@@ -253,6 +324,7 @@ export default function OboeruApp() {
 
       {section === "exercises" ? <div className="reader-main single"><section className="lesson-heading exercise-intro"><div><span className="eyebrow">II–III. 練習 · {activeLesson.number}課</span><h2>แบบฝึกหัด</h2><p>เลือกคำตอบหรือตอบข้อความแล้วกด “ตรวจคำตอบ” คำตอบจะถูกตรวจและล็อกทันที</p></div><div className="score-summary"><strong>{correct}/{answered}</strong><span>ตอบถูก</span></div></section><div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>ทั้งหมด ({activeLesson.exercises.length})</button><button className={filter === "basic" ? "active" : ""} onClick={() => setFilter("basic")}>基本練習</button><button className={filter === "practical" ? "active" : ""} onClick={() => setFilter("practical")}>実践練習</button></div><div className="exercise-list">{Object.entries(exerciseGroups).map(([group, items]) => <section key={group} className="exercise-group"><h3>{group}<span>{items.filter((item) => attempts.has(item.id)).length}/{items.length}</span></h3>{items.map((exercise) => <ExerciseCard key={exercise.id} exercise={exercise} attempt={attempts.get(exercise.id)} onAnswer={(value) => answer(exercise, value)} />)}</section>)}</div></div> : null}
     </main>
+    {editingLesson ? <LessonEditor key={editingLesson.id} lesson={editingLesson} book={catalog.books.find((item) => item.id === editingLesson.bookId)!} onSave={updateLesson} onDelete={deleteLesson} onClose={() => setEditingLesson(null)} /> : null}
     {activeBook.category === "Vocabulary" && (section === "vocabulary" || section === "examples") ? <button className="floating-translation" onClick={toggleTranslation} aria-pressed={showThai}>{showThai ? "ไทย ✓ · ซ่อนคำแปล" : "ไทย · ดูคำแปล"}</button> : null}
   </div>;
 }

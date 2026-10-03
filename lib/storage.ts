@@ -17,10 +17,11 @@ function mergeBuiltInCatalog(stored: Catalog): Catalog {
   const lessonIds = new Set(stored.lessons.map((item) => item.id));
   const builtInLessons = new Map(builtIn.lessons.map((item) => [item.id, item]));
   return {
+    ...stored,
     books: [...stored.books, ...builtIn.books.filter((item) => !bookIds.has(item.id))],
     lessons: [
-      ...stored.lessons.map((item) => item.contentStatus === "index_only" && builtInLessons.has(item.id) ? builtInLessons.get(item.id)! : item),
-      ...builtIn.lessons.filter((item) => !lessonIds.has(item.id)),
+      ...stored.lessons.map((item) => item.contentStatus === "index_only" && !stored.editedLessonIds?.includes(item.id) && builtInLessons.has(item.id) ? builtInLessons.get(item.id)! : item),
+      ...builtIn.lessons.filter((item) => !lessonIds.has(item.id) && !stored.deletedLessonIds?.includes(item.id)),
     ],
   };
 }
@@ -86,10 +87,24 @@ export const catalogRepository = {
   },
 };
 
+export async function saveLearningState(catalog: Catalog, progress: Progress): Promise<void> {
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = database.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(catalog, CATALOG_KEY);
+    tx.objectStore(STORE).put(progress, PROGRESS_KEY);
+    tx.oncomplete = () => { database.close(); resolve(); };
+    tx.onerror = () => { database.close(); reject(tx.error); };
+    tx.onabort = () => { database.close(); reject(tx.error); };
+  });
+}
+
 export async function restoreBackup(backup: BackupPayload): Promise<{ progress: Progress; catalog: Catalog }> {
   if (backup.format !== "oboeru-backup" || (backup.version !== 1 && backup.version !== 2)) throw new Error("ไฟล์นี้ไม่ใช่ Oboeru backup เวอร์ชันที่รองรับ");
   if (!Array.isArray(backup.progress?.learnedIds) || !Array.isArray(backup.progress?.attempts)) throw new Error("ข้อมูล progress ในไฟล์ไม่สมบูรณ์");
   if (backup.catalog && (!Array.isArray(backup.catalog.books) || !Array.isArray(backup.catalog.lessons)
+    || (backup.catalog.deletedLessonIds !== undefined && (!Array.isArray(backup.catalog.deletedLessonIds) || backup.catalog.deletedLessonIds.some((id) => typeof id !== "string")))
+    || (backup.catalog.editedLessonIds !== undefined && (!Array.isArray(backup.catalog.editedLessonIds) || backup.catalog.editedLessonIds.some((id) => typeof id !== "string")))
     || backup.catalog.books.some((item) => typeof item.id !== "string" || typeof item.title !== "string")
     || backup.catalog.lessons.some((item) => typeof item.id !== "string" || typeof item.bookId !== "string"
       || !Array.isArray(item.vocabularyGroups) || !Array.isArray(item.examples) || !Array.isArray(item.exercises)))) {
