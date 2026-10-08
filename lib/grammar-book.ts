@@ -1,12 +1,46 @@
 import type { Book, Lesson } from "./types";
 import { selectExercise } from "./exercise-builders";
+import { grammarOneExplanation } from "./grammar-one-explanations";
+import { enhanceGrammarExplanation } from "./grammar-detailed-explanations";
+import { grammarTwoExercises } from "./grammar-two-exercises";
+import { grammarThreeExercises } from "./grammar-three-exercises";
+import { grammarFourExercises } from "./grammar-four-exercises";
+import { grammarFiveExercises } from "./grammar-five-exercises";
+import { grammarSixExercises } from "./grammar-six-exercises";
+import { grammarSevenExercises } from "./grammar-seven-exercises";
+import { grammarEightExercises } from "./grammar-eight-exercises";
+import { grammarNineExercises } from "./grammar-nine-exercises";
+import { grammarTenExercises } from "./grammar-ten-exercises";
+import { grammarElevenExercises } from "./grammar-eleven-exercises";
+import { grammarTwelveExercises } from "./grammar-twelve-exercises";
+import { grammarThirteenExercises } from "./grammar-thirteen-exercises";
+import { grammarFourteenExercises } from "./grammar-fourteen-exercises";
+import { grammarFifteenExercises } from "./grammar-fifteen-exercises";
+import { grammarSixteenExercises } from "./grammar-sixteen-exercises";
+import { grammarSeventeenExercises } from "./grammar-seventeen-exercises";
+import { grammarEighteenExercises } from "./grammar-eighteen-exercises";
+import { grammarNineteenExercises } from "./grammar-nineteen-exercises";
+import { grammarTwentyExercises } from "./grammar-twenty-exercises";
+import { grammarTwentyOneExercises } from "./grammar-twenty-one-exercises";
+import { grammarTwentyTwoExercises } from "./grammar-twenty-two-exercises";
+import { grammarTwentyThreeExercises } from "./grammar-twenty-three-exercises";
+import { grammarTwentyFourExercises } from "./grammar-twenty-four-exercises";
+import { grammarTwentyFiveExercises } from "./grammar-twenty-five-exercises";
+import { grammarTwentySixExercises } from "./grammar-twenty-six-exercises";
+import { grammarReviewOneFive } from "./grammar-review-one-five";
+import { grammarReviewOneTen } from "./grammar-review-one-ten";
+import { grammarReviewOneFifteen } from "./grammar-review-one-fifteen";
+import { grammarReviewOneTwenty } from "./grammar-review-one-twenty";
+import { grammarReviewOneTwentySix } from "./grammar-review-one-twenty-six";
+import { consolidationA, consolidationB, consolidationC, consolidationD, consolidationE, consolidationF, consolidationG } from "./grammar-consolidation";
+import { grammarAssemblyOne, grammarAssemblyTwo } from "./grammar-assembly";
 
 export const grammarBook: Book = {
   id: "shin-kanzen-master-n2-bunpou",
   title: "新完全マスター 文法 日本語能力試験 N2",
   category: "Grammar",
   jlptLevel: "N2",
-  lessons: 41,
+  lessons: 48,
 };
 
 function grammarLesson(part: number, chapterNumber: number, chapter: string, number: number, title: string, patterns: string[]): Lesson {
@@ -114,5 +148,53 @@ grammarLessons[0] = {
   ...grammarLessons[0],
   contentStatus: "imported",
   sourcePages: [8, 9, 10, 11],
-  exercises: grammarOneExercises,
+  exercises: grammarOneExercises.map((exercise) => ({ ...exercise, explanation: grammarOneExplanation(exercise), explanationSource: "ai_generated" })),
 };
+
+grammarLessons[1] = {
+  ...grammarLessons[1],
+  contentStatus: "imported",
+  sourcePages: [12, 13, 14, 15],
+  exercises: grammarTwoExercises,
+};
+
+grammarLessons[2] = { ...grammarLessons[2], contentStatus: "imported", sourcePages: [16, 17, 18, 19], exercises: grammarThreeExercises };
+grammarLessons[3] = { ...grammarLessons[3], contentStatus: "imported", sourcePages: [20, 21, 22, 23], exercises: grammarFourExercises };
+grammarLessons[4] = { ...grammarLessons[4], contentStatus: "imported", sourcePages: [24, 25, 26, 27, 28, 29], exercises: [...grammarFiveExercises, ...grammarReviewOneFive] };
+grammarLessons[5] = { ...grammarLessons[5], contentStatus: "imported", sourcePages: [30, 31, 32, 33], exercises: grammarSixExercises };
+grammarLessons[6] = { ...grammarLessons[6], contentStatus: "imported", sourcePages: [34, 35, 36, 37], exercises: grammarSevenExercises };
+grammarLessons[7] = { ...grammarLessons[7], contentStatus: "imported", sourcePages: [38, 39, 40, 41], exercises: grammarEightExercises };
+grammarLessons[8] = { ...grammarLessons[8], contentStatus: "imported", sourcePages: [42, 43, 44, 45], exercises: grammarNineExercises };
+grammarLessons[9] = { ...grammarLessons[9], contentStatus: "imported", sourcePages: [46, 47, 48, 49, 50, 51], exercises: [...grammarTenExercises, ...grammarReviewOneTen] };
+grammarLessons[10] = { ...grammarLessons[10], contentStatus: "imported", sourcePages: [52, 53, 54, 55], exercises: grammarElevenExercises };
+grammarLessons[11] = { ...grammarLessons[11], contentStatus: "imported", sourcePages: [56, 57, 58, 59], exercises: grammarTwelveExercises };
+grammarLessons[12] = { ...grammarLessons[12], contentStatus: "imported", sourcePages: [60, 61, 62, 63], exercises: grammarThirteenExercises };
+grammarLessons[13] = { ...grammarLessons[13], contentStatus: "imported", sourcePages: [64, 65, 66, 67], exercises: grammarFourteenExercises };
+grammarLessons[14] = { ...grammarLessons[14], contentStatus: "imported", sourcePages: [68, 69, 70, 71, 72, 73], exercises: [...grammarFifteenExercises, ...grammarReviewOneFifteen] };
+grammarLessons[15] = { ...grammarLessons[15], contentStatus: "imported", sourcePages: [74, 75, 76, 77], exercises: grammarSixteenExercises };
+grammarLessons[16] = { ...grammarLessons[16], contentStatus: "imported", sourcePages: [78, 79, 80, 81], exercises: grammarSeventeenExercises };
+grammarLessons[17] = { ...grammarLessons[17], contentStatus: "imported", sourcePages: [82, 83, 84, 85], exercises: grammarEighteenExercises };
+grammarLessons[18] = { ...grammarLessons[18], contentStatus: "imported", sourcePages: [86, 87, 88, 89], exercises: grammarNineteenExercises };
+grammarLessons[19] = { ...grammarLessons[19], contentStatus: "imported", sourcePages: [90, 91, 92, 93, 94, 95], exercises: [...grammarTwentyExercises, ...grammarReviewOneTwenty] };
+grammarLessons[20] = { ...grammarLessons[20], contentStatus: "imported", sourcePages: [96, 97, 98, 99], exercises: grammarTwentyOneExercises };
+grammarLessons[21] = { ...grammarLessons[21], contentStatus: "imported", sourcePages: [100, 101, 102, 103], exercises: grammarTwentyTwoExercises };
+grammarLessons[22] = { ...grammarLessons[22], contentStatus: "imported", sourcePages: [104, 105, 106, 107], exercises: grammarTwentyThreeExercises };
+grammarLessons[23] = { ...grammarLessons[23], contentStatus: "imported", sourcePages: [108, 109, 110, 111], exercises: grammarTwentyFourExercises };
+grammarLessons[24] = { ...grammarLessons[24], contentStatus: "imported", sourcePages: [112, 113, 114, 115], exercises: grammarTwentyFiveExercises };
+grammarLessons[25] = { ...grammarLessons[25], contentStatus: "imported", sourcePages: [116, 117, 118, 119, 120, 121], exercises: [...grammarTwentySixExercises, ...grammarReviewOneTwentySix] };
+grammarLessons[26] = { ...grammarLessons[26], contentStatus: "imported", sourcePages: [140, 141], exercises: grammarAssemblyOne };
+grammarLessons[27] = { ...grammarLessons[27], contentStatus: "imported", sourcePages: [142, 143, 144, 145], exercises: grammarAssemblyTwo };
+
+// A–G are unnumbered in the book; 27+ keeps them after lesson 26 in the UI.
+grammarLessons.push(
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 27, "A 元の言葉に着目", ["～に際して", "～にあたって", "～にわたって", "～を通じて・～を通して", "～に限って", "～に関して", "～をめぐって", "～に対して", "～にこたえて", "～に基づいて", "～に沿って", "～にしたがって", "～につれて", "～に伴って", "～に応じて", "～によって", "～において", "～に先立って"]), contentStatus: "imported", sourcePages: [122, 123], exercises: consolidationA },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 28, "B「言う・する」を使った言い方", ["～といった", "～といえば・～というと・～といったら", "～といっても", "～からといって", "～とはいいながら", "～からして", "～としたら・～とすれば・～とすると", "～にしても・～にしろ", "～にしては", "～にしたら・～にすれば", "～からすると・～からいうと"]), contentStatus: "imported", sourcePages: [124, 125], exercises: consolidationB },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 29, "C 古い言葉を使った言い方", ["～もかまわず", "～を問わず", "～にかかわらず・～にもかかわらず", "～ずじまいだ", "～ずにはいられない", "～ざるを得ない", "～べきだ・～べきではない", "～まい・～ではあるまいか", "～つつ・～つつある", "～にせよ"]), contentStatus: "imported", sourcePages: [126, 127], exercises: consolidationC },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 30, "D「もの・こと」を使った言い方", ["～ものか", "～というものではない", "～ものの・～とはいうものの", "～ものなら・～（よ）うものなら", "～もので・～ものだから", "～ものだ・～というものだ", "～たいものだ・～てほしいものだ", "～ないもの（だろう）か", "～ものがある", "～（のこと）となると", "～ないことには", "～ことだし・～のことだから", "～ことだ・～ことはない", "～ことだろう・～ことか", "～こと", "～ことなく", "～ことに", "～ことは～が", "～ということだ・～とのことだ"]), contentStatus: "imported", sourcePages: [128, 129, 130, 131], exercises: consolidationD },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 31, "E「わけ・ところ」を使った言い方", ["～わけがない", "～わけではない・～というわけではない", "～わけにはいかない", "～ないわけにはいかない", "～わけだ・～というわけだ", "～どころではない", "～どころか", "～たところ", "～ところだった", "～ところから・～ことから"]), contentStatus: "imported", sourcePages: [132, 133], exercises: consolidationE },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 32, "F 二つの言葉を組にする言い方・助詞", ["～やら～やら", "～というか～というか", "～にしても～にしても・～にしろ～にしろ・～にせよ～にせよ", "～だの～だの", "～か～ないかのうちに", "～（よ）うか～まいか", "～とは", "～ぐらい・～くらい", "～など・～なんか・～なんて", "～まで・～までして", "～として～ない", "～さえ", "～のみ"]), contentStatus: "imported", sourcePages: [134, 135], exercises: consolidationF },
+  { ...grammarLesson(1, 3, "第1部 文の文法1 · IV 文法形式の整理", 33, "G 文法的性質の整理", ["事実か気持ちが入っているか", "自分か他者か", "プラスイメージかマイナスイメージか"]), contentStatus: "imported", sourcePages: [136, 137], exercises: consolidationG },
+);
+
+// Upgrade only reviewed exercises; stable IDs keep attempts and custom lessons intact.
+for (const lesson of grammarLessons) lesson.exercises = lesson.exercises.map(enhanceGrammarExplanation);

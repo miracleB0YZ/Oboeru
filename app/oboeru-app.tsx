@@ -2,22 +2,32 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { book, lesson as lessonOne } from "@/lib/lesson-data";
-import { lessonTwo } from "@/lib/lesson-two";
+import { vocabularyLessons } from "@/lib/vocabulary-lessons";
+import { vocabularyN2Book, vocabularyN2Lessons } from "@/lib/vocabulary-n2-book";
 import { grammarBook, grammarLessons } from "@/lib/grammar-book";
+import { grammarN1Book, grammarN1Lessons } from "@/lib/grammar-n1-book";
 import { analyzeLessonImport, validateLessonImport, type ImportQualityIssue, type LessonImport } from "@/lib/import-validator";
 import { catalogRepository, createBackup, emptyProgress, progressRepository, restoreBackup, saveLearningState } from "@/lib/storage";
 import LessonEditor from "./lesson-editor";
 import type { Attempt, Book, Catalog, Exercise, Lesson, Progress } from "@/lib/types";
+import { inlinePassageParts, splitAnswerBlank, splitAnswerBlanks } from "@/lib/inline-answer";
+import MultiBlankAnswer from "./multi-blank-answer";
+import AnkiExport from "./anki-export";
+import IntroCloze, { AnswerFeedback } from "./intro-cloze";
+import VocabularyFlashcards from "./vocabulary-flashcards";
+import { markVocabularyLearned } from "@/lib/vocabulary-flashcards";
+import VocabularyCopy from "./vocabulary-copy";
+import { unlearnedVocabularyWords } from "@/lib/vocabulary-copy";
 
-const seededCatalog: Catalog = { books: [book, grammarBook], lessons: [lessonOne, lessonTwo, ...grammarLessons] };
+const seededCatalog: Catalog = { books: [book, grammarBook, vocabularyN2Book, grammarN1Book], lessons: [...vocabularyLessons, ...grammarLessons, ...vocabularyN2Lessons, ...grammarN1Lessons] };
 type Section = Progress["lastSection"];
 const navigation: Array<{ id: Section; label: string; icon: string }> = [
   { id: "overview", label: "ภาพรวม", icon: "⌂" },
   { id: "library", label: "คลังหนังสือ", icon: "▤" },
   { id: "vocabulary", label: "เนื้อหา", icon: "あ" },
-  { id: "examples", label: "ตัวอย่าง", icon: "文" },
   { id: "exercises", label: "แบบฝึกหัด", icon: "✓" },
   { id: "management", label: "จัดการหนังสือ", icon: "⚙" },
+  { id: "anki-export", label: "สร้างไฟล์ Anki", icon: "⇩" },
 ];
 const percentage = (value: number, total: number) => total ? Math.round(value * 100 / total) : 0;
 const normalized = (value: string) => value.normalize("NFKC").trim();
@@ -27,23 +37,28 @@ const allLearningItems = (lesson: Lesson) => lesson.grammarPatterns?.length ? le
 function ExerciseCard({ exercise, attempt, onAnswer }: { exercise: Exercise; attempt?: Attempt; onAnswer: (value: string) => void }) {
   const [draft, setDraft] = useState("");
   const submitted = Boolean(attempt);
+  const inlineBlank = exercise.type === "text" ? splitAnswerBlank(exercise.prompt) : null;
+  const multipleBlanks = exercise.type === "text" && splitAnswerBlanks(exercise.prompt).filter((part) => "index" in part).length > 1;
   const sendText = () => { if (!submitted && draft.trim()) onAnswer(draft); };
+  const answerInput = <input
+    className={inlineBlank ? "inline-answer-input" : undefined}
+    lang="ja" value={attempt?.answer ?? draft} disabled={submitted} autoComplete="off"
+    onChange={(event) => setDraft(event.target.value)}
+    onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault(); }}
+    placeholder={inlineBlank?.hint || "พิมพ์คำตอบ"} aria-label={`คำตอบ ${exercise.title}`}
+    style={inlineBlank ? { width: `${Math.min(24, Math.max(8, (attempt?.answer ?? draft ?? "").length * 2 + 2, (inlineBlank.hint.length * 2) + 2))}ch` } : undefined}
+  />;
   return <article className={`exercise-card ${submitted ? (attempt?.correct ? "is-correct" : "is-wrong") : ""}`}>
     {exercise.passage ? <div className="exercise-passage"><strong>ข้อความจากหนังสือ</strong><p lang="ja">{exercise.passage}</p></div> : null}
     <div className="exercise-heading"><span className="eyebrow">{exercise.title}</span>{exercise.points ? <span className="points">{exercise.points} คะแนน</span> : null}</div>
-    <p className="exercise-prompt" lang="ja">{exercise.prompt}</p>
+    {!inlineBlank ? <p className="exercise-prompt" lang="ja">{exercise.prompt}</p> : null}
     {exercise.type === "choice" ? <div className="choices">{exercise.choices?.map((choice) => <button
       key={choice.id} type="button" disabled={submitted} onClick={() => onAnswer(choice.id)}
       className={`choice ${attempt?.answer === choice.id ? "selected" : ""} ${submitted && exercise.answer === choice.id ? "correct" : ""}`}
-    ><span className="choice-key">{choice.id}</span><span lang="ja">{choice.label}</span></button>)}</div> : <form className="text-answer" onSubmit={(event) => { event.preventDefault(); sendText(); }}><input
-      lang="ja" value={attempt?.answer ?? draft} disabled={submitted} onChange={(event) => setDraft(event.target.value)}
-      onKeyDown={(event) => { if (event.key === "Enter" && event.nativeEvent.isComposing) event.preventDefault(); }}
-      placeholder="พิมพ์คำตอบภาษาญี่ปุ่น" aria-label={`คำตอบ ${exercise.title}`}
-    /><button type="submit" disabled={submitted || !draft.trim()}>ตรวจคำตอบ</button><span>{exercise.hint ?? "กด Enter หรือปุ่มตรวจคำตอบเพื่อส่งคำตอบครั้งเดียว"}</span></form>}
-    {attempt ? <div className={`feedback ${attempt.correct ? "correct" : "wrong"}`} aria-live="polite">
-      <div className="feedback-title"><strong>{attempt.correct ? "ถูกต้อง" : "ผิด — ข้อนี้ล็อกแล้ว"}</strong><span>เฉลย: <span lang="ja">{exercise.correctLabel}</span></span></div>
-      <p>{exercise.explanation}</p><small className="source-badge">{exercise.explanationSource === "original" ? "อ้างอิงคำอธิบายจากเฉลย" : "คำอธิบายเพิ่มเติม · AI-generated"}</small>
-    </div> : null}
+    ><span className="choice-key">{choice.id}</span><span lang="ja">{choice.label}</span></button>)}</div> : multipleBlanks ? <MultiBlankAnswer exercise={exercise} attempt={attempt} onAnswer={onAnswer} /> : <form className={`text-answer${inlineBlank ? " inline-answer" : ""}`} onSubmit={(event) => { event.preventDefault(); sendText(); }}>
+      {inlineBlank ? <p className="exercise-prompt" lang="ja">{inlineBlank.before}<span className="inline-answer-slot">（{answerInput}）</span>{inlineBlank.after}</p> : answerInput}
+      <button type="submit" disabled={submitted || !draft.trim()}>ตรวจคำตอบ</button><span className="answer-hint">{exercise.hint ?? "กด Enter หรือปุ่มตรวจคำตอบเพื่อส่งคำตอบครั้งเดียว"}</span></form>}
+    {attempt ? <AnswerFeedback exercise={exercise} attempt={attempt} /> : null}
   </article>;
 }
 
@@ -56,6 +71,7 @@ export default function OboeruApp() {
   const [selectedBookId, setSelectedBookId] = useState(book.id);
   const [bookFocused, setBookFocused] = useState(false);
   const [showThai, setShowThai] = useState(false);
+  const [vocabularyMode, setVocabularyMode] = useState<"read" | "flashcards">("read");
   const [categoryFilter, setCategoryFilter] = useState<"all" | Book["category"]>("all");
   const [filter, setFilter] = useState<"all" | "basic" | "practical">("all");
   const [ready, setReady] = useState(false);
@@ -66,13 +82,17 @@ export default function OboeruApp() {
   const [importPreview, setImportPreview] = useState<{ data: LessonImport; issues: ImportQualityIssue[] } | null>(null);
   const [importAccepted, setImportAccepted] = useState(false);
   const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
+  const [ankiFronts, setAnkiFronts] = useState<string[]>([]);
+  const [ankiLoading, setAnkiLoading] = useState(false);
+  const [ankiNotice, setAnkiNotice] = useState("");
+  const ankiFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     Promise.all([progressRepository.get(), catalogRepository.get()]).then(([stored, available]) => {
       progressRef.current = stored;
       setProgress(stored);
       setCatalog(available);
-      setSection(stored.lastSection);
+      setSection(stored.lastSection === "examples" ? "vocabulary" : stored.lastSection);
       if (available.lessons.some((item) => item.id === stored.lastLessonId)) {
         setLessonId(stored.lastLessonId!);
         setSelectedBookId(available.lessons.find((item) => item.id === stored.lastLessonId)?.bookId ?? book.id);
@@ -90,6 +110,7 @@ export default function OboeruApp() {
   const activeBook = catalog.books.find((item) => item.id === activeLesson.bookId) ?? book;
   const selectedBook = catalog.books.find((item) => item.id === selectedBookId) ?? book;
   const vocab = allVocabulary(activeLesson);
+  const unlearnedWords = unlearnedVocabularyWords(vocab, progress.learnedIds);
   const learningItems = allLearningItems(activeLesson);
   const learned = learningItems.filter((item) => progress.learnedIds.includes(item.id)).length;
   const attempts = useMemo(() => new Map(progress.attempts.map((item) => [item.exerciseId, item])), [progress.attempts]);
@@ -98,19 +119,20 @@ export default function OboeruApp() {
   const bookLessons = lessons.filter((item) => item.bookId === selectedBookId);
   const bookLearned = bookLessons.reduce((sum, item) => sum + allLearningItems(item).filter((entry) => progress.learnedIds.includes(entry.id)).length, 0);
   const bookVocabulary = bookLessons.reduce((sum, item) => sum + allLearningItems(item).length, 0);
-  const lastBookLesson = [...bookLessons].sort((a, b) => b.number - a.number)[0];
+  const lastBookLesson = [...bookLessons].sort((a, b) => b.chapterNumber - a.chapterNumber || b.number - a.number)[0];
   const nextTemplateNumber = (lastBookLesson?.number ?? 0) + 1;
   const templateUrl = `/api/lesson-template?number=${nextTemplateNumber}&chapterNumber=${lastBookLesson?.chapterNumber ?? 1}&chapter=${encodeURIComponent(lastBookLesson?.chapter ?? "1章 人間")}`;
 
   async function save(next: Progress) {
     progressRef.current = next;
     setProgress(next);
-    try { await progressRepository.save(next); } catch { setNotice("บันทึกข้อมูลไม่สำเร็จ กรุณาลองอีกครั้ง"); }
+    try { await progressRepository.save(next); return true; } catch { setNotice("บันทึกข้อมูลไม่สำเร็จ กรุณาลองอีกครั้ง"); return false; }
   }
   async function go(nextSection: Section, nextLessonId = lessonId) {
-    if (nextSection === "library") setBookFocused(section === "vocabulary" || section === "examples" || section === "exercises");
+    if (nextSection === "library") setBookFocused(section === "vocabulary" || section === "exercises");
     setSection(nextSection);
     setLessonId(nextLessonId);
+    setVocabularyMode("read");
     if (nextSection !== "management") setSelectedBookId(lessons.find((item) => item.id === nextLessonId)?.bookId ?? selectedBookId);
     setFilter("all");
     await save({ ...progressRef.current, lastSection: nextSection, lastLessonId: nextLessonId, showThai, updatedAt: new Date().toISOString() });
@@ -125,6 +147,16 @@ export default function OboeruApp() {
     const current = progressRef.current;
     const learnedIds = current.learnedIds.includes(id) ? current.learnedIds.filter((item) => item !== id) : [...current.learnedIds, id];
     await save({ ...current, learnedIds, updatedAt: new Date().toISOString() });
+  }
+  async function learnFromFlashcard(id: string) {
+    const current = progressRef.current;
+    const next = markVocabularyLearned(current, id);
+    const saved = await save(next);
+    if (!saved && progressRef.current === next) {
+      progressRef.current = current;
+      setProgress(current);
+    }
+    return saved;
   }
   async function answer(exercise: Exercise, value: string) {
     const current = progressRef.current;
@@ -147,7 +179,7 @@ export default function OboeruApp() {
     try {
       const restored = await restoreBackup(JSON.parse(await file.text()));
       setCatalog(restored.catalog);
-      progressRef.current = restored.progress; setProgress(restored.progress); setSection(restored.progress.lastSection);
+      progressRef.current = restored.progress; setProgress(restored.progress); setSection(restored.progress.lastSection === "examples" ? "vocabulary" : restored.progress.lastSection);
       const restoredLesson = restored.catalog.lessons.find((item) => item.id === restored.progress.lastLessonId) ?? restored.catalog.lessons[0];
       setLessonId(restoredLesson?.id ?? lessonOne.id);
       setSelectedBookId(restoredLesson?.bookId ?? restored.catalog.books[0]?.id ?? book.id);
@@ -155,6 +187,18 @@ export default function OboeruApp() {
       setNotice("กู้คืนข้อมูลสำเร็จ");
     } catch (error) { setNotice(error instanceof Error ? error.message : "นำเข้าไฟล์ไม่สำเร็จ"); }
     event.target.value = "";
+  }
+  async function importAnki(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; if (!file) return;
+    setAnkiLoading(true); setAnkiNotice("");
+    try {
+      const form = new FormData(); form.append("file", file);
+      const response = await fetch("/api/anki-import", { method: "POST", body: form });
+      const result = await response.json() as { fronts?: string[]; count?: number; error?: string };
+      if (!response.ok || !result.fronts) throw new Error(result.error ?? "อ่านเด็คไม่สำเร็จ");
+      setAnkiFronts(result.fronts); setAnkiNotice(`โหลด Front สำเร็จ ${result.count ?? result.fronts.length.toLocaleString()} คำ`);
+    } catch (error) { setAnkiFronts([]); setAnkiNotice(error instanceof Error ? error.message : "อ่านเด็คไม่สำเร็จ"); }
+    finally { setAnkiLoading(false); event.target.value = ""; }
   }
 
   async function saveCatalog(next: Catalog) {
@@ -191,7 +235,7 @@ export default function OboeruApp() {
     if (!editingLesson) return;
     const owner = catalog.books.find((item) => item.id === candidate.bookId);
     if (!owner) throw new Error("ไม่พบหนังสือของ Lesson นี้");
-    const schema = owner.category === "Grammar" ? "shin-kanzen-master-n2-bunpou.lesson" : "shin-kanzen-master-n1-goi.lesson";
+    const schema = owner.category === "Grammar" ? (owner.jlptLevel === "N1" ? "shin-kanzen-master-n1-bunpou.lesson" : "shin-kanzen-master-n2-bunpou.lesson") : "shin-kanzen-master-n1-goi.lesson";
     validateLessonImport({ schema, schemaVersion: 1, lesson: candidate }, { bookId: owner.id });
     const others = catalog.lessons.filter((item) => item.id !== candidate.id);
     if (others.some((item) => item.bookId === candidate.bookId && item.chapterNumber === candidate.chapterNumber && item.number === candidate.number)) throw new Error("Lesson หมายเลขนี้มีอยู่แล้วในบทนี้");
@@ -281,18 +325,32 @@ export default function OboeruApp() {
     (groups[key] ??= []).push(exercise);
     return groups;
   }, {});
+  const ankiKeys = (value: string) => {
+    const key = normalized(value).replace(/\s+/g, "");
+    // A な-adjective is often stored in Tango as its dictionary form (社交的),
+    // while the textbook displays the attributive form (社交的な).
+    return key.endsWith("な") ? [key, key.slice(0, -1)] : [key];
+  };
+  const ankiHasWord = (value: string) => {
+    const keys = new Set(ankiKeys(value));
+    return ankiFronts.some((front) => ankiKeys(front).some((key) => keys.has(key)));
+  };
+  const ankiMissing = ankiFronts.length ? learningItems.filter((item) => !ankiHasWord("word" in item ? item.word : item.pattern)) : [];
+  const ankiFound = ankiFronts.length ? learningItems.length - ankiMissing.length : 0;
 
   return <div className="app-shell">
     <aside className="sidebar">
       <button className="brand" onClick={() => go("overview")}><span className="brand-mark">覚</span><span><strong>Oboeru</strong><small>จำให้แม่น เรียนให้ลึก</small></span></button>
-      <nav aria-label="เมนูหลัก">{navigation.filter((item) => activeBook.category !== "Grammar" || item.id !== "examples").map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => go(item.id)}><span>{item.icon}</span>{item.id === "vocabulary" ? (activeBook.category === "Grammar" ? "ไวยากรณ์" : "คำศัพท์") : item.label}</button>)}</nav>
+      <nav aria-label="เมนูหลัก">{navigation.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => go(item.id)}><span>{item.icon}</span>{item.id === "vocabulary" ? (activeBook.category === "Grammar" ? "ไวยากรณ์" : "คำศัพท์") : item.label}</button>)}</nav>
       <div className="sidebar-footer"><button onClick={exportBackup}>ส่งออกข้อมูล</button><button onClick={() => fileRef.current?.click()}>นำเข้าข้อมูล</button><input ref={fileRef} hidden type="file" accept="application/json" onChange={importBackup} /><p><span className="status-dot" />เก็บข้อมูลในเครื่องนี้</p></div>
     </aside>
 
     <main className="main-content">
       <header className="topbar"><div><span className="breadcrumb">คลังหนังสือ / {activeBook.title} / {activeLesson.chapter} / {activeLesson.number}課</span><h1>{section === "overview" ? "ยินดีต้อนรับกลับมา" : section === "vocabulary" && activeBook.category === "Grammar" ? "ไวยากรณ์" : navigation.find((item) => item.id === section)?.label}</h1></div><div className="header-actions">{activeBook.category === "Vocabulary" ? <button onClick={toggleTranslation}>{showThai ? "ซ่อน" : "ดู"}คำแปลไทย</button> : null}<div className="avatar">覚</div></div></header>
       {notice ? <button className="notice" onClick={() => setNotice("")}>{notice}<span>×</span></button> : null}
+      {section === "vocabulary" && activeBook.category === "Vocabulary" ? <VocabularyCopy key={JSON.stringify([activeLesson.id, unlearnedWords])} words={unlearnedWords} /> : null}
 
+      <div hidden={section !== "anki-export"}><AnkiExport /></div>
       {section === "overview" ? <div className="page-stack">
         <section className="hero-card"><div><span className="eyebrow">บทเรียนล่าสุด · {activeLesson.chapter}</span><h2 lang="ja">{activeLesson.number}課　{activeLesson.title}</h2><p>เลือกบทเรียนในคลังหนังสือ แล้วดูรายการ{activeBook.category === "Grammar" ? "ไวยากรณ์" : "คำศัพท์"}และทำแบบฝึกหัดพร้อมเฉลยทันที</p><button className="primary" onClick={() => go("vocabulary")}>เรียนต่อ <span>→</span></button></div><div className="hero-character"><span>覚</span><span>{activeBook.category === "Grammar" ? "文" : "語"}</span><span>日</span><span>本</span></div></section>
         <section className="metrics-grid"><article><div className="metric-symbol">{activeBook.category === "Grammar" ? "文" : "語"}</div><div><span>{activeBook.category === "Grammar" ? "ไวยากรณ์" : "คำศัพท์"}บทนี้ที่เรียนแล้ว</span><strong>{learned} <small>/ {learningItems.length} รายการ</small></strong></div></article><article><div className="metric-symbol">✓</div><div><span>แบบฝึกหัดบทนี้ที่ตอบแล้ว</span><strong>{answered} <small>/ {activeLesson.exercises.length} ข้อ</small></strong></div></article><article className="score-card"><span>ความถูกต้องบทนี้</span><strong>{percentage(correct, answered)}%</strong><small>{correct} ข้อถูก จาก {answered} ข้อที่ตอบ</small></article></section>
@@ -312,25 +370,24 @@ export default function OboeruApp() {
         <section className="management-panel"><strong>แก้ไข / ลบ Lesson ใน “{selectedBook.title}”</strong><form onSubmit={(event) => { event.preventDefault(); const id = String(new FormData(event.currentTarget).get("lessonId")); setEditingLesson(bookLessons.find((item) => item.id === id) ?? null); }}><label>เลือก Lesson<select key={selectedBookId + bookLessons.map((item) => item.id).join()} name="lessonId" required disabled={!bookLessons.length}>{[...bookLessons].sort((a, b) => a.chapterNumber - b.chapterNumber || a.number - b.number).map((item) => <option value={item.id} key={item.id}>{item.chapter} · {item.number}課 {item.title}</option>)}</select></label><button type="submit" disabled={!bookLessons.length}>แก้ไข / ลบ Lesson</button></form>{!bookLessons.length ? <p>ยังไม่มี Lesson เพิ่ม Lesson ด้านล่างเพื่อเริ่มใส่เนื้อหา</p> : null}</section>
         <details className="management-panel"><summary>เพิ่มหนังสือ</summary><form action={createBook}><label>ชื่อหนังสือ<input name="title" required placeholder="ชื่อหนังสือ" /></label><label>ประเภท<select name="category"><option>Vocabulary</option><option>Grammar</option></select></label><label>JLPT<select name="jlptLevel">{["N1","N2","N3","N4","N5"].map((level) => <option key={level}>{level}</option>)}</select></label><button type="submit">เพิ่มหนังสือ</button></form></details>
         <details className="management-panel"><summary>เพิ่ม Lesson ว่างใน “{selectedBook.title}”</summary><form action={createEmptyLesson}><label>บทที่<input name="chapterNumber" type="number" min="1" required defaultValue="1" /></label><label>ชื่อบท<input name="chapter" required placeholder="เช่น 1章 人間" /></label><label>Lesson ที่<input name="number" type="number" min="1" required /></label><label>ชื่อ Lesson<input name="title" required placeholder="เช่น 人間関係" /></label><button type="submit">เพิ่ม Lesson</button></form></details>
-        <div className="management-panel import-panel"><strong>นำเข้าเนื้อหา Lesson จาก JSON</strong><p>รองรับ 新完全マスター 語彙 N1 และ 文法 N2 ระบบจะตรวจโครงสร้าง หน้าที่ขาด เนื้อหาน่าสงสัย และคำตอบที่รั่วในบทอ่านก่อนบันทึก</p><div className="import-actions"><button onClick={() => lessonFileRef.current?.click()}>เลือกไฟล์ JSON</button>{selectedBook.id === book.id ? <a href={templateUrl}>ดาวน์โหลด Template สำหรับ {nextTemplateNumber}課</a> : null}</div><input ref={lessonFileRef} hidden type="file" accept="application/json,.json" onChange={previewLessonFile} />{importPreview ? <div className="import-preview"><strong>{importPreview.data.lesson.chapter} / {importPreview.data.lesson.number}課 {importPreview.data.lesson.title}</strong><p>{importPreview.data.schema === "shin-kanzen-master-n2-bunpou.lesson" ? `${importPreview.data.lesson.grammarPatterns?.length ?? 0} ไวยากรณ์` : `${importPreview.data.lesson.vocabularyGroups.reduce((sum, group) => sum + group.items.length, 0)} คำ · ${importPreview.data.lesson.examples.length} ตัวอย่าง`} · 基本 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "basic").length} ข้อ · 実践 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "practical").length} ข้อ</p><p>หน้าต้นฉบับ: {importPreview.data.lesson.sourcePages?.join(", ") || "ไม่ได้ระบุ"}</p>{importPreview.issues.length ? <div className="quality-report"><strong>รายงานคุณภาพก่อนนำเข้า</strong><ul>{importPreview.issues.map((issue) => <li key={`${issue.code}-${issue.message}`} className={issue.severity}>{issue.severity === "error" ? "ต้องแก้" : "ควรตรวจ"}: {issue.message}</li>)}</ul>{!importPreview.issues.some((issue) => issue.severity === "error") ? <label className="quality-confirm"><input type="checkbox" checked={importAccepted} onChange={(event) => setImportAccepted(event.target.checked)} />ฉันตรวจคำเตือนกับ PDF แล้วและยืนยันว่าข้อมูลถูกต้อง</label> : null}</div> : <p className="quality-pass">ไม่พบความผิดปกติจากการตรวจอัตโนมัติ</p>}<button disabled={importPreview.issues.some((issue) => issue.severity === "error") || (importPreview.issues.length > 0 && !importAccepted)} onClick={confirmLessonImport}>ยืนยันนำเข้า IndexedDB</button><button onClick={() => { setImportPreview(null); setImportAccepted(false); }}>ยกเลิก</button></div> : null}</div>
+        <div className="management-panel import-panel"><strong>นำเข้าเนื้อหา Lesson จาก JSON</strong><p>รองรับ 新完全マスター 語彙 N1 และ 文法 N1/N2 ระบบจะตรวจโครงสร้าง หน้าที่ขาด เนื้อหาน่าสงสัย และคำตอบที่รั่วในบทอ่านก่อนบันทึก</p><div className="import-actions"><button onClick={() => lessonFileRef.current?.click()}>เลือกไฟล์ JSON</button>{selectedBook.id === book.id ? <a href={templateUrl}>ดาวน์โหลด Template สำหรับ {nextTemplateNumber}課</a> : null}</div><input ref={lessonFileRef} hidden type="file" accept="application/json,.json" onChange={previewLessonFile} />{importPreview ? <div className="import-preview"><strong>{importPreview.data.lesson.chapter} / {importPreview.data.lesson.number}課 {importPreview.data.lesson.title}</strong><p>{importPreview.data.schema !== "shin-kanzen-master-n1-goi.lesson" ? `${importPreview.data.lesson.grammarPatterns?.length ?? 0} ไวยากรณ์` : `${importPreview.data.lesson.vocabularyGroups.reduce((sum, group) => sum + group.items.length, 0)} คำ · ${importPreview.data.lesson.examples.length} ตัวอย่าง`} · 基本 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "basic").length} ข้อ · 実践 {importPreview.data.lesson.exercises.filter((exercise) => exercise.section === "practical").length} ข้อ</p><p>หน้าต้นฉบับ: {importPreview.data.lesson.sourcePages?.join(", ") || "ไม่ได้ระบุ"}</p>{importPreview.issues.length ? <div className="quality-report"><strong>รายงานคุณภาพก่อนนำเข้า</strong><ul>{importPreview.issues.map((issue) => <li key={`${issue.code}-${issue.message}`} className={issue.severity}>{issue.severity === "error" ? "ต้องแก้" : "ควรตรวจ"}: {issue.message}</li>)}</ul>{!importPreview.issues.some((issue) => issue.severity === "error") ? <label className="quality-confirm"><input type="checkbox" checked={importAccepted} onChange={(event) => setImportAccepted(event.target.checked)} />ฉันตรวจคำเตือนกับ PDF แล้วและยืนยันว่าข้อมูลถูกต้อง</label> : null}</div> : <p className="quality-pass">ไม่พบความผิดปกติจากการตรวจอัตโนมัติ</p>}<button disabled={importPreview.issues.some((issue) => issue.severity === "error") || (importPreview.issues.length > 0 && !importAccepted)} onClick={confirmLessonImport}>ยืนยันนำเข้า IndexedDB</button><button onClick={() => { setImportPreview(null); setImportAccepted(false); }}>ยกเลิก</button></div> : null}</div>
         <div className="library-note">มีดัชนีคำศัพท์ N1 Lesson 1–2 และดัชนีไวยากรณ์ N2 ครบ 3 ภาค 41課 · สำรองทั้งหนังสือ เนื้อหา และความคืบหน้าได้ด้วยปุ่ม “ส่งออกข้อมูล”</div>
       </div> : null}
 
-      {(section === "vocabulary" || section === "examples" || section === "exercises") ? <div className="lesson-switcher"><button onClick={() => go("library")}>← คลังหนังสือ</button><select aria-label="เลือกบทเรียน" value={lessonId} onChange={(event) => go(section, event.target.value)}>{lessons.filter((item) => item.bookId === activeLesson.bookId).map((item) => <option key={item.id} value={item.id}>{item.chapter} · {item.number}課 {item.title}</option>)}</select></div> : null}
+      {(section === "vocabulary" || section === "exercises") ? <div className="lesson-switcher"><button onClick={() => go("library")}>← คลังหนังสือ</button><select aria-label="เลือกบทเรียน" value={lessonId} onChange={(event) => go(section, event.target.value)}>{lessons.filter((item) => item.bookId === activeLesson.bookId).map((item) => <option key={item.id} value={item.id}>{item.chapter} · {item.number}課 {item.title}</option>)}</select></div> : null}
 
-      {section === "vocabulary" ? <div className="reader-layout"><div className="reader-main"><section className="lesson-heading"><span className="eyebrow">{activeLesson.chapter}</span><h2 lang="ja">{activeLesson.number}課　{activeLesson.title}</h2><p>{activeBook.category === "Grammar" ? "รายการไวยากรณ์ตามสารบัญของหนังสือ โดยไม่เพิ่มคำอธิบายหรือคำแปล" : "ความหมายญี่ปุ่นเป็นคำอธิบายเพิ่มเติม คำแปลไทยเปิดได้ด้วยปุ่มลอยขณะเลื่อนอ่าน"}</p>{activeBook.category === "Grammar" ? <a className="grammar-template-link" href={`/api/lesson-template?lessonId=${encodeURIComponent(activeLesson.id)}`}>ดาวน์โหลด Template เพื่อเพิ่มแบบฝึกหัดและเฉลย</a> : null}</section>{activeBook.category === "Grammar" ? <section className="grammar-section"><div className="section-title"><h3>文法項目</h3><span>{activeLesson.grammarPatterns?.filter((item) => progress.learnedIds.includes(item.id)).length ?? 0}/{activeLesson.grammarPatterns?.length ?? 0}</span></div><div className="grammar-grid">{activeLesson.grammarPatterns?.map((item, index) => <article className={`grammar-card ${progress.learnedIds.includes(item.id) ? "learned" : ""}`} key={item.id}><span>{String(index + 1).padStart(2, "0")}</span><strong lang="ja">{item.pattern}</strong><button onClick={() => toggleLearned(item.id)} aria-pressed={progress.learnedIds.includes(item.id)}>{progress.learnedIds.includes(item.id) ? "✓ เรียนแล้ว" : "+ ทำเครื่องหมาย"}</button></article>)}</div></section> : <>{!vocab.length ? <div className="library-note">Lesson นี้ยังไม่มีเนื้อหา กรุณานำเข้า JSON ในคลังหนังสือ</div> : null}{activeLesson.vocabularyGroups.map((group) => <section className="vocab-section" key={group.id}><div className="section-title"><h3 lang="ja">{group.title}</h3><span>{group.items.filter((item) => progress.learnedIds.includes(item.id)).length}/{group.items.length}</span></div><div className="vocab-grid">{group.items.map((item) => <article className={`vocab-card ${progress.learnedIds.includes(item.id) ? "learned" : ""}`} key={item.id}><div><h4 lang="ja">{item.word}</h4>{item.reading ? <span lang="ja">{item.reading}</span> : null}</div>{item.japaneseMeaning ? <p className="japanese-meaning" lang="ja">{item.japaneseMeaning}<small>日本語の説明 · AI-generated</small></p> : null}{showThai ? <p className="thai-meaning">{item.thai}<small>คำแปลไทย · AI-generated</small></p> : null}<button onClick={() => toggleLearned(item.id)} aria-pressed={progress.learnedIds.includes(item.id)}>{progress.learnedIds.includes(item.id) ? "✓ เรียนแล้ว" : "+ ทำเครื่องหมาย"}</button></article>)}</div></section>)}</>}</div><aside className="reader-progress"><span className="eyebrow">ความคืบหน้าบทนี้</span><strong>{learned}/{learningItems.length}</strong><div className="thin-progress"><span style={{ width: `${percentage(learned, learningItems.length)}%` }} /></div><p>Learned คือสถานะที่คุณเลือกเอง</p></aside></div> : null}
+      {section === "vocabulary" ? <div className="reader-layout"><div className="reader-main"><section className="lesson-heading"><span className="eyebrow">{activeLesson.chapter}</span><h2 lang="ja">{activeLesson.number}課　{activeLesson.title}</h2><p>{activeBook.category === "Grammar" ? "รายการไวยากรณ์ตามสารบัญของหนังสือ โดยไม่เพิ่มคำอธิบายหรือคำแปล" : "ความหมายญี่ปุ่นเป็นคำอธิบายเพิ่มเติม คำแปลไทยเปิดได้ด้วยปุ่มลอยขณะเลื่อนอ่าน"}</p>{activeBook.category === "Grammar" ? <a className="grammar-template-link" href={`/api/lesson-template?lessonId=${encodeURIComponent(activeLesson.id)}`}>ดาวน์โหลด Template เพื่อเพิ่มแบบฝึกหัดและเฉลย</a> : null}</section>{activeBook.category === "Vocabulary" ? <section className="anki-check management-panel"><div className="section-title"><div><h3>ตรวจคำศัพท์กับ Anki/Tango</h3><p>เทียบคำหลักของบทนี้กับ Front (VocabKanji) เท่านั้น</p></div><button type="button" onClick={() => ankiFileRef.current?.click()} disabled={ankiLoading}>{ankiLoading ? "กำลังอ่านเด็ค…" : "โหลดเด็ค Anki"}</button></div><input ref={ankiFileRef} hidden type="file" accept=".colpkg,.apkg,.csv,.txt" onChange={importAnki} />{ankiNotice ? <p className="anki-notice">{ankiNotice}</p> : null}{ankiFronts.length ? <><div className="anki-stats"><strong>{ankiFound}/{learningItems.length}</strong><span>คำในบทที่พบใน Front · ขาด {ankiMissing.length} คำ</span></div>{ankiMissing.length ? <div className="anki-missing"><strong>คำที่ยังไม่มีการ์ดหลัก</strong><p lang="ja">{ankiMissing.map((item) => "word" in item ? item.word : item.pattern).join("、")}</p></div> : <p className="anki-ok">คำในบทนี้มีการ์ดหลักครบแล้ว</p>}</> : null}</section> : null}{activeBook.category === "Grammar" ? <section className="grammar-section"><div className="section-title"><h3>文法項目</h3><span>{activeLesson.grammarPatterns?.filter((item) => progress.learnedIds.includes(item.id)).length ?? 0}/{activeLesson.grammarPatterns?.length ?? 0}</span></div><div className="grammar-grid">{activeLesson.grammarPatterns?.map((item, index) => <article className={`grammar-card ${progress.learnedIds.includes(item.id) ? "learned" : ""}`} key={item.id}><span>{String(index + 1).padStart(2, "0")}</span><strong lang="ja">{item.pattern}</strong><button onClick={() => toggleLearned(item.id)} aria-pressed={progress.learnedIds.includes(item.id)}>{progress.learnedIds.includes(item.id) ? "✓ เรียนแล้ว" : "+ ทำเครื่องหมาย"}</button></article>)}</div></section> : <><div className="vocabulary-mode" role="group" aria-label="โหมดเรียนคำศัพท์"><button type="button" aria-pressed={vocabularyMode === "read"} onClick={() => setVocabularyMode("read")}>อ่านคำศัพท์</button><button type="button" aria-pressed={vocabularyMode === "flashcards"} onClick={() => setVocabularyMode("flashcards")}>แฟลชการ์ด · คำอธิบาย → คำศัพท์</button></div>{vocabularyMode === "flashcards" ? <VocabularyFlashcards key={activeLesson.id} items={vocab} learnedIds={progress.learnedIds} showThai={showThai} onLearned={learnFromFlashcard} /> : <>{!vocab.length ? <div className="library-note">Lesson นี้ยังไม่มีเนื้อหา กรุณานำเข้า JSON ในคลังหนังสือ</div> : null}{activeLesson.vocabularyGroups.map((group) => <section className="vocab-section" key={group.id}><div className="section-title"><h3 lang="ja">{group.title}</h3><span>{group.items.filter((item) => progress.learnedIds.includes(item.id)).length}/{group.items.length}</span></div><div className="vocab-grid">{group.items.map((item) => <article className={`vocab-card ${progress.learnedIds.includes(item.id) ? "learned" : ""}`} key={item.id}><div><h4 lang="ja">{item.word}</h4>{item.reading ? <span lang="ja">{item.reading}</span> : null}</div>{item.japaneseMeaning ? <p className="japanese-meaning" lang="ja">{item.japaneseMeaning}<small>日本語の説明 · AI-generated</small></p> : null}{showThai ? <p className="thai-meaning">{item.thai}<small>คำแปลไทย · AI-generated</small></p> : null}<button onClick={() => toggleLearned(item.id)} aria-pressed={progress.learnedIds.includes(item.id)}>{progress.learnedIds.includes(item.id) ? "✓ เรียนแล้ว" : "+ ทำเครื่องหมาย"}</button></article>)}</div></section>)}</>}</>}</div><aside className="reader-progress"><span className="eyebrow">ความคืบหน้าบทนี้</span><strong>{learned}/{learningItems.length}</strong><div className="thin-progress"><span style={{ width: `${percentage(learned, learningItems.length)}%` }} /></div><p>Learned คือสถานะที่คุณเลือกเอง</p></aside></div> : null}
 
-      {section === "examples" ? <div className="reader-main single"><section className="lesson-heading"><span className="eyebrow">I. 言葉と例文</span><h2>{activeLesson.number}課　ตัวอย่างประโยค</h2><p>ประโยคญี่ปุ่นมาจากหนังสือ คำแปลไทยเป็นข้อมูลเสริม</p></section>{!activeLesson.examples.length ? <div className="library-note">Lesson นี้ยังไม่มีตัวอย่างประโยค</div> : null}<div className="example-list">{activeLesson.examples.map((item, index) => <article key={item.id}><span>{String(index + 1).padStart(2, "0")}</span><div><p lang="ja">{item.japanese}</p>{showThai ? <small>{item.thai} · <b>AI-generated</b></small> : <small>ใช้ปุ่ม “ดูคำแปลไทย” เพื่อเปิดคำแปล</small>}</div></article>)}</div></div> : null}
 
-      {section === "exercises" ? <div className="reader-main single"><section className="lesson-heading exercise-intro"><div><span className="eyebrow">II–III. 練習 · {activeLesson.number}課</span><h2>แบบฝึกหัด</h2><p>เลือกคำตอบหรือตอบข้อความแล้วกด “ตรวจคำตอบ” คำตอบจะถูกตรวจและล็อกทันที</p></div><div className="score-summary"><strong>{correct}/{answered}</strong><span>ตอบถูก</span></div></section><div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>ทั้งหมด ({activeLesson.exercises.length})</button><button className={filter === "basic" ? "active" : ""} onClick={() => setFilter("basic")}>基本練習</button><button className={filter === "practical" ? "active" : ""} onClick={() => setFilter("practical")}>実践練習</button></div><div className="exercise-list">{Object.entries(exerciseGroups).map(([group, items]) => <section key={group} className="exercise-group"><h3>{group}<span>{items.filter((item) => attempts.has(item.id)).length}/{items.length}</span></h3>{items.map((exercise) => <ExerciseCard key={exercise.id} exercise={exercise} attempt={attempts.get(exercise.id)} onAnswer={(value) => answer(exercise, value)} />)}</section>)}</div></div> : null}
+{section === "exercises" ? <div className="reader-main single"><section className="lesson-heading exercise-intro"><div><span className="eyebrow">II–III. 練習 · {activeLesson.number}課</span><h2>แบบฝึกหัด</h2><p>เลือกคำตอบหรือตอบข้อความแล้วกด “ตรวจคำตอบ” คำตอบจะถูกตรวจและล็อกทันที</p></div><div className="score-summary"><strong>{correct}/{answered}</strong><span>ตอบถูก</span></div></section><div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>ทั้งหมด ({activeLesson.exercises.length})</button><button className={filter === "basic" ? "active" : ""} onClick={() => setFilter("basic")}>基本練習</button><button className={filter === "practical" ? "active" : ""} onClick={() => setFilter("practical")}>実践練習</button></div><div className="exercise-list">{Object.entries(exerciseGroups).map(([group, items]) => <section key={group} className="exercise-group"><h3>{group}<span>{items.filter((item) => attempts.has(item.id)).length}/{items.length}</span></h3>{inlinePassageParts(items) ? <IntroCloze key={items.map((item) => item.id).join("|")} exercises={items} attempts={attempts} onAnswer={(exercise, value) => answer(exercise, value)} /> : items.map((exercise) => <ExerciseCard key={exercise.id} exercise={exercise} attempt={attempts.get(exercise.id)} onAnswer={(value) => answer(exercise, value)} />)}</section>)}</div></div> : null}
     </main>
     {editingLesson ? <LessonEditor key={editingLesson.id} lesson={editingLesson} book={catalog.books.find((item) => item.id === editingLesson.bookId)!} onSave={updateLesson} onDelete={deleteLesson} onClose={() => setEditingLesson(null)} /> : null}
-    {activeBook.category === "Vocabulary" && (section === "vocabulary" || section === "examples") ? <button className="floating-translation" onClick={toggleTranslation} aria-pressed={showThai}>{showThai ? "ไทย ✓ · ซ่อนคำแปล" : "ไทย · ดูคำแปล"}</button> : null}
+    {activeBook.category === "Vocabulary" && section === "vocabulary" ? <button className="floating-translation" onClick={toggleTranslation} aria-pressed={showThai}>{showThai ? "ไทย ✓ · ซ่อนคำแปล" : "ไทย · ดูคำแปล"}</button> : null}
   </div>;
 }
 
 function BookSummary({ book: item, lessonCount, learned, total, onOpen }: { book: Book; lessonCount: number; learned: number; total: number; onOpen: () => void }) {
-  return <article className="book-card"><div className="book-cover"><small>日本語能力試験</small><strong>{item.id === book.id || item.id === grammarBook.id ? <>新完全<br />マスター</> : item.title}</strong><span>{item.category === "Vocabulary" ? "語彙" : "文法"}</span><b>{item.jlptLevel}</b></div><div className="book-info"><span className="pill">{item.category.toUpperCase()} · JLPT {item.jlptLevel}</span><h3 lang="ja">{item.title}</h3><p>{lessonCount} Lesson · {total ? (item.category === "Grammar" ? "Index ready" : "Imported") : "ยังไม่มีเนื้อหา"}</p><div className="thin-progress"><span style={{ width: `${percentage(learned, total)}%` }} /></div><div className="book-meta"><span>Learned {learned}/{total} {item.category === "Grammar" ? "ไวยากรณ์" : "คำ"}</span><button onClick={onOpen}>ดูบทเรียน →</button></div></div></article>;
+  return <article className="book-card"><div className="book-cover"><small>日本語能力試験</small><strong>{item.id === book.id || item.id === grammarBook.id || item.id === grammarN1Book.id || item.id === vocabularyN2Book.id ? <>新完全<br />マスター</> : item.title}</strong><span>{item.category === "Vocabulary" ? "語彙" : "文法"}</span><b>{item.jlptLevel}</b></div><div className="book-info"><span className="pill">{item.category.toUpperCase()} · JLPT {item.jlptLevel}</span><h3 lang="ja">{item.title}</h3><p>{lessonCount} Lesson · {total ? (item.category === "Grammar" ? "Index ready" : "Imported") : "ยังไม่มีเนื้อหา"}</p><div className="thin-progress"><span style={{ width: `${percentage(learned, total)}%` }} /></div><div className="book-meta"><span>Learned {learned}/{total} {item.category === "Grammar" ? "ไวยากรณ์" : "คำ"}</span><button onClick={onOpen}>ดูบทเรียน →</button></div></div></article>;
 }
 
 function LessonPicker({ lessons, activeId, onOpen, progress }: { lessons: Lesson[]; activeId: string; onOpen: (id: string) => void; progress: Progress }) {

@@ -79,7 +79,7 @@ export type Attempt = {
 export type Progress = {
   learnedIds: string[];
   attempts: Attempt[];
-  lastSection: "overview" | "library" | "management" | "vocabulary" | "examples" | "exercises";
+  lastSection: "overview" | "library" | "management" | "vocabulary" | "examples" | "exercises" | "anki-export";
   lastLessonId?: string;
   showThai?: boolean;
   updatedAt: string;

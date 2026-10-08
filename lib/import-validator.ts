@@ -1,9 +1,10 @@
 import { book } from "./lesson-data";
 import { grammarBook } from "./grammar-book";
+import { grammarN1Book } from "./grammar-n1-book";
 import type { Exercise, Lesson, VocabularyGroup } from "./types";
 
 export type LessonImport = {
-  schema: "shin-kanzen-master-n1-goi.lesson" | "shin-kanzen-master-n2-bunpou.lesson";
+  schema: "shin-kanzen-master-n1-goi.lesson" | "shin-kanzen-master-n2-bunpou.lesson" | "shin-kanzen-master-n1-bunpou.lesson";
   schemaVersion: 1;
   lesson: Lesson;
 };
@@ -18,11 +19,11 @@ const record = (value: unknown): value is Record<string, unknown> => typeof valu
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 
 export function validateLessonImport(value: unknown, editing?: { bookId: string }): LessonImport {
-  if (!record(value) || (value.schema !== "shin-kanzen-master-n1-goi.lesson" && value.schema !== "shin-kanzen-master-n2-bunpou.lesson") || value.schemaVersion !== 1 || !record(value.lesson)) {
+  if (!record(value) || (value.schema !== "shin-kanzen-master-n1-goi.lesson" && value.schema !== "shin-kanzen-master-n2-bunpou.lesson" && value.schema !== "shin-kanzen-master-n1-bunpou.lesson") || value.schemaVersion !== 1 || !record(value.lesson)) {
     throw new Error("Schema ต้องเป็น Lesson ของ Oboeru เวอร์ชัน 1 ที่รองรับ");
   }
   const lesson = value.lesson;
-  const expectedBookId = editing?.bookId ?? (value.schema === "shin-kanzen-master-n2-bunpou.lesson" ? grammarBook.id : book.id);
+  const expectedBookId = editing?.bookId ?? (value.schema === "shin-kanzen-master-n1-bunpou.lesson" ? grammarN1Book.id : value.schema === "shin-kanzen-master-n2-bunpou.lesson" ? grammarBook.id : book.id);
   if (lesson.bookId !== expectedBookId || !nonempty(lesson.id) || !nonempty(lesson.title) || !nonempty(lesson.chapter)
     || !Number.isInteger(lesson.chapterNumber) || Number(lesson.chapterNumber) < 1
     || !Number.isInteger(lesson.number) || Number(lesson.number) < 1) {
@@ -35,7 +36,7 @@ export function validateLessonImport(value: unknown, editing?: { bookId: string 
     throw new Error("Lesson ต้องมี vocabularyGroups, examples และ exercises เป็น array");
   }
   if (!editing && value.schema === "shin-kanzen-master-n1-goi.lesson" && lesson.vocabularyGroups.length === 0) throw new Error("Lesson คำศัพท์ต้องมีคำศัพท์อย่างน้อยหนึ่งกลุ่ม");
-  if (value.schema === "shin-kanzen-master-n2-bunpou.lesson") {
+  if (value.schema === "shin-kanzen-master-n2-bunpou.lesson" || value.schema === "shin-kanzen-master-n1-bunpou.lesson") {
     if (!Array.isArray(lesson.grammarPatterns) || (!editing && lesson.grammarPatterns.length === 0)) throw new Error("Lesson Grammar ต้องมี grammarPatterns เป็นรายการไวยากรณ์");
     const grammarIds = new Set<string>();
     for (const item of lesson.grammarPatterns) {
@@ -95,9 +96,10 @@ export function analyzeLessonImport(value: LessonImport): ImportQualityIssue[] {
   if (pages.length && pages.length < 4) add("short-page-range", "warning", `พบ sourcePages เพียง ${pages.length} หน้า (${pages.join(", ")}) ขณะที่ Lesson ในเล่มนี้โดยทั่วไปมี 4 หน้า`);
   if (pages.some((page, index) => index > 0 && page !== pages[index - 1] + 1)) add("page-gap", "warning", `sourcePages ไม่ต่อเนื่อง (${pages.join(", ")}) อาจมีการข้ามทั้งหน้าขณะตัด ウォーミングアップ`);
 
-  const isGrammar = value.schema === "shin-kanzen-master-n2-bunpou.lesson";
-  const part = lesson.chapterNumber <= 3 ? 1 : lesson.chapterNumber === 4 ? 2 : 3;
-  const canonicalId = isGrammar ? `shin-kanzen-n2-bunpou-p${part}-${String(lesson.number).padStart(2, "0")}` : `shin-kanzen-n1-goi-${String(lesson.number).padStart(2, "0")}`;
+  const isN1Grammar = value.schema === "shin-kanzen-master-n1-bunpou.lesson";
+  const isGrammar = isN1Grammar || value.schema === "shin-kanzen-master-n2-bunpou.lesson";
+  const part = isN1Grammar ? (lesson.chapterNumber <= 4 ? 1 : lesson.chapterNumber === 5 ? 2 : lesson.chapterNumber === 6 ? 3 : 4) : (lesson.chapterNumber <= 3 ? 1 : lesson.chapterNumber === 4 ? 2 : 3);
+  const canonicalId = isGrammar ? `shin-kanzen-${isN1Grammar ? "n1" : "n2"}-bunpou-p${part}-${String(lesson.number).padStart(2, "0")}` : `shin-kanzen-n1-goi-${String(lesson.number).padStart(2, "0")}`;
   if (lesson.id !== canonicalId) add("noncanonical-lesson-id", "warning", `Lesson ${lesson.number}課 ควรใช้ id “${canonicalId}” แต่ไฟล์ใช้ “${lesson.id}” ให้ตรวจว่า number เป็นเลข課ที่พิมพ์จริง`);
 
   const words = lesson.vocabularyGroups.flatMap((group) => group.items);

@@ -1,4 +1,5 @@
 import { grammarLessons } from "@/lib/grammar-book";
+import { grammarN1Book, grammarN1Lessons } from "@/lib/grammar-n1-book";
 
 function positiveInteger(value: string | null, fallback: number) {
   const parsed = Number(value);
@@ -7,10 +8,10 @@ function positiveInteger(value: string | null, fallback: number) {
 
 export function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const grammarLesson = grammarLessons.find((item) => item.id === params.get("lessonId"));
+  const grammarLesson = [...grammarLessons, ...grammarN1Lessons].find((item) => item.id === params.get("lessonId"));
   if (grammarLesson) {
     const template = {
-      schema: "shin-kanzen-master-n2-bunpou.lesson",
+      schema: grammarLesson.bookId === grammarN1Book.id ? "shin-kanzen-master-n1-bunpou.lesson" : "shin-kanzen-master-n2-bunpou.lesson",
       schemaVersion: 1,
       lesson: {
         ...grammarLesson,

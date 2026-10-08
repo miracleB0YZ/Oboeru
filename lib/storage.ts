@@ -1,7 +1,9 @@
 import type { BackupPayload, Catalog, Progress } from "./types";
-import { book, lesson as lessonOne } from "./lesson-data";
-import { lessonTwo } from "./lesson-two";
+import { book } from "./lesson-data";
+import { vocabularyLessons } from "./vocabulary-lessons";
+import { vocabularyN2Book, vocabularyN2Lessons } from "./vocabulary-n2-book";
 import { grammarBook, grammarLessons } from "./grammar-book";
+import { grammarN1Book, grammarN1Lessons } from "./grammar-n1-book";
 
 const DB_NAME = "oboeru";
 const DB_VERSION = 1;
@@ -9,7 +11,7 @@ const STORE = "appState";
 const PROGRESS_KEY = "lesson-01-progress";
 const CATALOG_KEY = "catalog";
 
-const initialCatalog = (): Catalog => ({ books: [book, grammarBook], lessons: [lessonOne, lessonTwo, ...grammarLessons] });
+const initialCatalog = (): Catalog => ({ books: [book, grammarBook, vocabularyN2Book, grammarN1Book], lessons: [...vocabularyLessons, ...grammarLessons, ...vocabularyN2Lessons, ...grammarN1Lessons] });
 
 function mergeBuiltInCatalog(stored: Catalog): Catalog {
   const builtIn = initialCatalog();
@@ -18,9 +20,14 @@ function mergeBuiltInCatalog(stored: Catalog): Catalog {
   const builtInLessons = new Map(builtIn.lessons.map((item) => [item.id, item]));
   return {
     ...stored,
-    books: [...stored.books, ...builtIn.books.filter((item) => !bookIds.has(item.id))],
+    books: [
+      // Migrate the previous shipped title without changing custom book names.
+      ...stored.books.map((item) => item.id === vocabularyN2Book.id && ["新完全 マスター", "新完全マスター 語彙 日本語能力試験 N2"].includes(item.title) ? { ...item, title: vocabularyN2Book.title } : item),
+      ...builtIn.books.filter((item) => !bookIds.has(item.id)),
+    ],
     lessons: [
-      ...stored.lessons.map((item) => item.contentStatus === "index_only" && !stored.editedLessonIds?.includes(item.id) && builtInLessons.has(item.id) ? builtInLessons.get(item.id)! : item),
+      // Refresh shipped content, but never overwrite lessons edited by the user.
+      ...stored.lessons.map((item) => !stored.editedLessonIds?.includes(item.id) && builtInLessons.has(item.id) ? builtInLessons.get(item.id)! : item),
       ...builtIn.lessons.filter((item) => !lessonIds.has(item.id) && !stored.deletedLessonIds?.includes(item.id)),
     ],
   };

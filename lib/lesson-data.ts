@@ -7,7 +7,7 @@ export const book: Book = {
   title: "新完全マスター 語彙 日本語能力試験 N1",
   category: "Vocabulary",
   jlptLevel: "N1",
-  lessons: 2,
+  lessons: 33,
 };
 
 const makeItems = (

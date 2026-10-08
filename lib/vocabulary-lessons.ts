@@ -1,0 +1,35 @@
+import { lesson } from "./lesson-data";
+import { lessonTwo } from "./lesson-two";
+import { lessonDailyLife } from "./lesson-daily-life";
+import { lessonMedicalHealth } from "./lesson-medical-health";
+import { lessonArtsSports } from "./lesson-arts-sports";
+import { lessonEducation } from "./lesson-education";
+import { lessonWork } from "./lesson-work";
+import { lessonMedia } from "./lesson-media";
+import { lessonEconomyIndustry } from "./lesson-economy-industry";
+import { lessonPoliticsHistory } from "./lesson-politics-history";
+import { lessonSocialIssues } from "./lesson-social-issues";
+import { lessonNatureGeography } from "./lesson-nature-geography";
+import { lessonTechnology } from "./lesson-technology";
+import { lessonTimeSpace } from "./lesson-time-space";
+import { lessonRelationsChange } from "./lesson-relations-change";
+import { lessonPolysemousNouns } from "./lesson-polysemous-nouns";
+import { lessonPolysemousVerbs } from "./lesson-polysemous-verbs";
+import { lessonSimilarAdverbsAdjectives } from "./lesson-similar-adverbs-adjectives";
+import { lessonSimilarVerbsNouns } from "./lesson-similar-verbs-nouns";
+import { lessonSimilarKanji } from "./lesson-similar-kanji";
+import { lessonSimilarNativeWords } from "./lesson-similar-native-words";
+import { lessonDegreeTimeFrequency } from "./lesson-degree-time-frequency";
+import { lessonPairedAdverbs } from "./lesson-paired-adverbs";
+import { lessonOtherAdverbs } from "./lesson-other-adverbs";
+import { lessonOnomatopoeiaOne } from "./lesson-onomatopoeia-one";
+import { lessonOnomatopoeiaTwo } from "./lesson-onomatopoeia-two";
+import { lessonBodyIdiomsOne } from "./lesson-body-idioms-one";
+import { lessonBodyIdiomsTwo } from "./lesson-body-idioms-two";
+import { lessonCompoundVerbsOne } from "./lesson-compound-verbs-one";
+import { lessonCompoundVerbsTwo } from "./lesson-compound-verbs-two";
+import { lessonAffixes } from "./lesson-affixes";
+import { lessonVocabularyMockOne, lessonVocabularyMockTwo } from "./lesson-vocabulary-mock-tests";
+
+// Shared by the initial UI and IndexedDB migration so new lessons appear in both.
+export const vocabularyLessons = [lesson, lessonTwo, lessonDailyLife, lessonMedicalHealth, lessonArtsSports, lessonEducation, lessonWork, lessonMedia, lessonEconomyIndustry, lessonPoliticsHistory, lessonSocialIssues, lessonNatureGeography, lessonTechnology, lessonTimeSpace, lessonRelationsChange, lessonPolysemousNouns, lessonPolysemousVerbs, lessonSimilarAdverbsAdjectives, lessonSimilarVerbsNouns, lessonSimilarKanji, lessonSimilarNativeWords, lessonDegreeTimeFrequency, lessonPairedAdverbs, lessonOtherAdverbs, lessonOnomatopoeiaOne, lessonOnomatopoeiaTwo, lessonBodyIdiomsOne, lessonBodyIdiomsTwo, lessonCompoundVerbsOne, lessonCompoundVerbsTwo, lessonAffixes, lessonVocabularyMockOne, lessonVocabularyMockTwo];
